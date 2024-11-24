@@ -1,0 +1,29 @@
+name: build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.82.0
+        components: rustfmt, clippy
+    
+    - uses: taiki-e/install-action@protoc
+
+    - name: Run cargo check
+      run: cargo check
+
+    - name: Run cargo fmt
+      run: cargo fmt --all -- --check
+    
+    - name: Run cargo clippy
+      run: cargo clippy -- -D warnings
+    
+    - name: Run cargo test
+      run: cargo test --all -- --nocapture
