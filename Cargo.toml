@@ -17,6 +17,7 @@ tonic = "0.12"
 tower = "0.5"
 hyper = "1.5"
 hyper-util = "0.1"
+tracing = "0.1"
 
 # for dev only
 rcgen = "0.13"

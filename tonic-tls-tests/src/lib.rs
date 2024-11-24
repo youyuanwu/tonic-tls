@@ -45,7 +45,7 @@ mod tests {
     async fn connect_test_tonic_channel(
         cert: &CertificateDer<'static>,
         addr: SocketAddr,
-    ) -> Channel {
+    ) -> Result<Channel, tonic_rustls::Error> {
         let url = format!("https://{}", addr).parse().unwrap();
         let mut root_cert_store = RootCertStore::empty();
         root_cert_store.add(cert.clone()).unwrap();
@@ -58,7 +58,7 @@ mod tests {
         tonic_rustls::new_endpoint()
             .connect_with_connector(tonic_rustls::connector(url, connector, dnsname))
             .await
-            .expect("cannot connect")
+            .map_err(tonic_rustls::Error::from)
     }
 
     // creates a listener on a random port from os, and return the addr.
@@ -104,12 +104,10 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn basic() {
+    fn make_test_cert(
+        subject_alt_names: Vec<String>,
+    ) -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
         use rcgen::{generate_simple_self_signed, CertifiedKey};
-        // Generate a certificate that's valid for "localhost" and "hello.world.example"
-        let subject_alt_names = vec!["hello.world.example".to_string(), "localhost".to_string()];
-
         let CertifiedKey { cert, key_pair } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         let cert = CertificateDer::from(cert);
@@ -118,9 +116,22 @@ mod tests {
             key_pair.serialize_der().into(),
         )
         .unwrap();
+        (cert, key)
+    }
+
+    #[tokio::test]
+    async fn basic() {
+        // Generate a certificate that's valid for "localhost" and "hello.world.example"
+        let (cert, key) = make_test_cert(vec![
+            "hello.world.example".to_string(),
+            "localhost".to_string(),
+        ]);
         let cert_cp = cert.clone();
-        // println!("{}", cert.pem());
-        // println!("{}", key_pair.serialize_pem());
+        let (cert2, _) = make_test_cert(vec![
+            "hello.world.example2".to_string(),
+            "localhost2".to_string(),
+        ]);
+        // let cert2_cp = cert.clone();
 
         // get a random port on localhost from os
         let (listener, addr) = create_listener_server().await;
@@ -138,24 +149,29 @@ mod tests {
         // wait a bit for server to boot up.
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        // TODO: enable this once the failure check is upstreamed.
         // send a request with a wrong cert and verify it fails
-        // {
-        //     let e = connect_test_tonic_channel(addr, &test_ca, &test_cert, &test_key)
-        //         .await
-        //         .expect_err("unexpected success");
-        //     // there is a double wrappring of the error of ssl Error
-        //     let src = e.source().unwrap().source().unwrap();
-        //     let ssl_e = src.downcast_ref::<openssl::ssl::Error>().unwrap();
-        //     // Check generic ssl error. The detail of the error should be server cert untrusted, which is unimportant,
-        //     // since the test case here only aims to cause an ssl failure between client and server.
-        //     assert_eq!(ssl_e.code(), openssl::ssl::ErrorCode::SSL);
-        //     let inner_e = ssl_e.ssl_error().unwrap().errors();
-        //     assert_eq!(inner_e.len(), 1);
-        // }
+        {
+            let e = connect_test_tonic_channel(&cert2, addr)
+                .await
+                .expect_err("unexpected success");
+            // there is a double wrappring of the error of ssl Error
+            let src = e.source().unwrap().source().unwrap();
+            // println!("debug error: {src:?}");
+            let ssl_e = src.downcast_ref::<std::io::Error>().unwrap();
+            assert_eq!(ssl_e.kind(), std::io::ErrorKind::InvalidData);
+            let ssl_e = ssl_e
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<rustls::Error>()
+                .unwrap();
+            // check cert is invalid
+            assert!(matches!(ssl_e, rustls::Error::InvalidCertificate(_)));
+        }
 
         // get client and send request
-        let ch = connect_test_tonic_channel(&cert, addr).await;
+        let ch = connect_test_tonic_channel(&cert, addr)
+            .await
+            .expect("cannot connect");
         let mut client = helloworld::greeter_client::GreeterClient::new(ch);
         let request = tonic::Request::new(helloworld::HelloRequest {
             name: "Tonic".into(),

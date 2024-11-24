@@ -1100,6 +1100,7 @@ dependencies = [
  "tokio-rustls",
  "tonic",
  "tower 0.5.1",
+ "tracing",
 ]
 
 [[package]]

@@ -13,3 +13,4 @@ tonic.workspace = true
 tower.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+tracing.workspace = true
