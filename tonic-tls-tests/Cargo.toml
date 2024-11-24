@@ -1,0 +1,25 @@
+[package]
+name = "tonic-tls-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+tonic-rustls.workspace = true
+
+tokio.workspace = true
+rustls = {workspace =  true, features = ["std", "ring"]}
+tokio-rustls.workspace = true
+tonic.workspace = true
+rcgen.workspace = true
+tokio-util.workspace = true
+tokio-stream.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+tonic-build = "0.12"
+
+# For protobuf rs code
+[package.metadata.rust-analyzer]
+cargo.loadOutDirsFromCheck = true

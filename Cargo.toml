@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+  "tonic-rustls"
+, "tonic-tls-tests"
+]
+
+[workspace.dependencies]
+tonic-rustls = { path = "tonic-rustls" }
+
+tokio = "1"
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false , features = ["std"]}
+async-stream = "0.3"
+futures = { version = "0.3", default-features = false }
+tonic = "0.12"
+tower = "0.5"
+hyper = "1.5"
+hyper-util = "0.1"
+
+# for dev only
+rcgen = "0.13"
+tokio-util = "0.7"
+tokio-stream = { version = "0.1", features = ["net"] }
+prost = "0.13"

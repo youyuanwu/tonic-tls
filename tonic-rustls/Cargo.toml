@@ -1,0 +1,15 @@
+[package]
+name = "tonic-rustls"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+tonic.workspace = true
+tower.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
