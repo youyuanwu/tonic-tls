@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
-members = [
+members = [ "tonic-ntls",
   "tonic-rustls"
-, "tonic-tls-tests"
+, "tonic-tls", "tonic-tls-tests"
 ]
 
 [workspace.dependencies]
+tonic-tls = { path = "tonic-tls" }
 tonic-rustls = { path = "tonic-rustls" }
 
 tokio = "1"
@@ -18,6 +19,9 @@ tower = "0.5"
 hyper = "1.5"
 hyper-util = "0.1"
 tracing = "0.1"
+
+# native tls
+tokio-native-tls = "0.3"
 
 # for dev only
 rcgen = "0.13"

@@ -1,17 +1,16 @@
 [package]
-name = "tonic-rustls"
+name = "tonic-ntls"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 tokio.workspace = true
-tokio-rustls.workspace = true
-rustls.workspace = true
+tonic.workspace = true
 async-stream.workspace = true
 futures.workspace = true
-tonic.workspace = true
+tokio-native-tls.workspace = true
+tonic-tls.workspace = true
+
 tower.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-tracing.workspace = true
-tonic-tls.workspace = true
