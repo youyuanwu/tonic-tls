@@ -8,6 +8,7 @@ members = [ "tonic-ntls",
 [workspace.dependencies]
 tonic-tls = { path = "tonic-tls" }
 tonic-rustls = { path = "tonic-rustls" }
+tonic-ntls = {path = "tonic-ntls"}
 
 tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
@@ -24,7 +25,7 @@ tracing = "0.1"
 tokio-native-tls = "0.3"
 
 # for dev only
-rcgen = "0.13"
+rcgen = {version = "0.13", default-features = true }
 tokio-util = "0.7"
 tokio-stream = { version = "0.1", features = ["net"] }
 prost = "0.13"

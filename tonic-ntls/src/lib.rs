@@ -3,6 +3,7 @@ use std::{
     error::Error as StdError,
     fmt::Debug,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -55,10 +56,44 @@ impl<S> tonic::transport::server::Connected for TlsStreamWrapper<S>
 where
     S: tonic::transport::server::Connected + AsyncRead + AsyncWrite + Unpin,
 {
-    type ConnectInfo = <S as tonic::transport::server::Connected>::ConnectInfo;
+    type ConnectInfo = SslConnectInfo<S::ConnectInfo>;
 
     fn connect_info(&self) -> Self::ConnectInfo {
-        self.0.get_ref().get_ref().get_ref().connect_info()
+        let inner = self.0.get_ref();
+        let cert = inner.peer_certificate().ok().and_then(|opt| opt);
+        let inner = inner.get_ref().get_ref().connect_info();
+        Self::ConnectInfo {
+            inner,
+            certs: cert.map(Arc::new),
+        }
+    }
+}
+
+/// Connection info for SSL streams.
+///
+/// This type will be accessible through [request extensions](tonic::Request::extensions).
+///
+/// See [`Connected`](tonic::transport::server::Connected) for more details.
+#[derive(Clone)]
+pub struct SslConnectInfo<T> {
+    inner: T,
+    certs: Option<Arc<tokio_native_tls::native_tls::Certificate>>,
+}
+
+impl<T> SslConnectInfo<T> {
+    /// Get a reference to the underlying connection info.
+    pub fn get_ref(&self) -> &T {
+        &self.inner
+    }
+
+    /// Get a mutable reference to the underlying connection info.
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
+    /// Return the set of connected peer SSL certificates.
+    pub fn peer_certs(&self) -> Option<Arc<tokio_native_tls::native_tls::Certificate>> {
+        self.certs.clone()
     }
 }
 

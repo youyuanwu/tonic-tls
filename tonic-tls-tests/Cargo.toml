@@ -5,9 +5,12 @@ edition = "2021"
 publish = false
 
 [dependencies]
+# openssl gen
+openssl = "0.10"
 
 [dev-dependencies]
 tonic-rustls.workspace = true
+tonic-ntls.workspace = true
 
 tokio.workspace = true
 rustls = {workspace =  true, features = ["std", "ring"]}
@@ -17,6 +20,9 @@ rcgen.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
 prost.workspace = true
+tonic-tls.workspace = true
+futures.workspace = true
+tokio-native-tls.workspace = true
 
 [build-dependencies]
 tonic-build = "0.12"

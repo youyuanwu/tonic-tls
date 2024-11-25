@@ -1277,16 +1277,21 @@ dependencies = [
 name = "tonic-tls-tests"
 version = "0.1.0"
 dependencies = [
+ "futures",
+ "openssl",
  "prost",
  "rcgen",
  "rustls",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "tonic",
  "tonic-build",
+ "tonic-ntls",
  "tonic-rustls",
+ "tonic-tls",
 ]
 
 [[package]]
