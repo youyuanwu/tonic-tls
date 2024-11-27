@@ -1,6 +1,5 @@
 use futures::Stream;
 use std::{
-    error::Error as StdError,
     fmt::Debug,
     pin::Pin,
     sync::Arc,
@@ -11,8 +10,6 @@ use tokio_native_tls::{TlsAcceptor, TlsStream};
 
 mod client;
 pub use client::connector;
-
-pub type Error = Box<dyn StdError + Send + Sync + 'static>;
 
 #[derive(Clone)]
 struct NativeTlsAcceptor(TlsAcceptor);
@@ -40,7 +37,7 @@ where
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
     acceptor: TlsAcceptor,
-) -> impl Stream<Item = Result<TlsStreamWrapper<IO>, Error>>
+) -> impl Stream<Item = Result<TlsStreamWrapper<IO>, crate::Error>>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,

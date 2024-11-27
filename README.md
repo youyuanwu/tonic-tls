@@ -6,6 +6,7 @@ Use `tonic` with various tls backends:
 
 * [native-tls](https://github.com/sfackler/rust-native-tls)
 * [rustls](https://github.com/rustls/rustls)
+* [openssl](https://github.com/sfackler/rust-openssl)
 
 # License
 This project is licensed under the MIT license.

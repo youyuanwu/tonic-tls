@@ -1089,7 +1089,7 @@ dependencies = [
  "fastrand",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1145,6 +1145,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-openssl"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59df6849caa43bb7567f9a36f863c447d95a11d5903c9cc334ba32576a27eadd"
+dependencies = [
+ "openssl",
+ "openssl-sys",
  "tokio",
 ]
 
@@ -1235,8 +1246,10 @@ dependencies = [
  "futures",
  "hyper",
  "hyper-util",
+ "openssl",
  "tokio",
  "tokio-native-tls",
+ "tokio-openssl",
  "tokio-rustls",
  "tonic",
  "tower 0.5.1",

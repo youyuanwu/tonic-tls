@@ -4,7 +4,7 @@ use tonic::transport::Uri;
 use tower::Service;
 
 #[derive(Clone)]
-pub struct RustlsConnector(tokio_rustls::TlsConnector);
+struct RustlsConnector(tokio_rustls::TlsConnector);
 
 impl crate::TlsConnector<TcpStream> for RustlsConnector {
     type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;

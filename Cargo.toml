@@ -20,6 +20,10 @@ tracing = "0.1"
 # native tls
 tokio-native-tls = "0.3"
 
+# openssl
+tokio-openssl = "0.6"
+openssl = "0.10"
+
 # for dev only
 rcgen = {version = "0.13", default-features = true }
 tokio-util = "0.7"
