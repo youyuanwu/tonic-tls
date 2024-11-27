@@ -2,6 +2,14 @@
 name = "tonic-tls"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["youyuanwu@outlook.com"]
+repository = "https://github.com/youyuanwu/tonic-tls"
+documentation = "https://github.com/youyuanwu/tonic-tls"
+description = "Tls wrappers for tonic."
+categories = ["web-programming", "network-programming"]
+keywords = ["gRPC", "tls", "rustls", "native-tls"]
+readme = "../README.md"
 
 [dependencies]
 tokio.workspace = true
