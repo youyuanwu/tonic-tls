@@ -1,13 +1,12 @@
 use tokio::net::TcpStream;
 
 use tonic::transport::Uri;
-use tonic_tls::TlsConnector;
 use tower::Service;
 
 #[derive(Clone)]
 pub struct NativeConnector(tokio_native_tls::TlsConnector);
 
-impl TlsConnector<TcpStream> for NativeConnector {
+impl crate::TlsConnector<TcpStream> for NativeConnector {
     type TlsStream = tokio_native_tls::TlsStream<TcpStream>;
     type Domain = String;
 
@@ -34,5 +33,5 @@ pub fn connector(
     Error = crate::Error,
 > {
     let ssl_conn = NativeConnector(ssl_conn);
-    tonic_tls::connector_inner(uri, ssl_conn, domain)
+    crate::connector_inner(uri, ssl_conn, domain)
 }

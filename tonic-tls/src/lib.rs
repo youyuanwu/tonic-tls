@@ -6,7 +6,13 @@ use std::{ops::ControlFlow, pin::pin};
 use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 mod client;
-pub use client::{connector_inner, TlsConnector};
+pub use client::{connector_inner, new_endpoint, TlsConnector};
+
+#[cfg(feature = "native")]
+pub mod native;
+
+#[cfg(feature = "rustls")]
+pub mod rustls;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 

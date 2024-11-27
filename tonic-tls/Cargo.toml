@@ -13,3 +13,14 @@ tower.workspace = true
 tonic.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+
+# native tls
+tokio-native-tls = { workspace = true, optional = true }
+
+# rustls
+tokio-rustls = { workspace = true, optional = true }
+
+[features]
+default = []
+native = ["dep:tokio-native-tls"]
+rustls = ["dep:tokio-rustls"]

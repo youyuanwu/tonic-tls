@@ -1228,38 +1228,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-ntls"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "futures",
- "hyper",
- "hyper-util",
- "tokio",
- "tokio-native-tls",
- "tonic",
- "tonic-tls",
- "tower 0.5.1",
-]
-
-[[package]]
-name = "tonic-rustls"
-version = "0.1.0"
-dependencies = [
- "async-stream",
- "futures",
- "hyper",
- "hyper-util",
- "rustls",
- "tokio",
- "tokio-rustls",
- "tonic",
- "tonic-tls",
- "tower 0.5.1",
- "tracing",
-]
-
-[[package]]
 name = "tonic-tls"
 version = "0.1.0"
 dependencies = [
@@ -1268,6 +1236,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "tokio",
+ "tokio-native-tls",
+ "tokio-rustls",
  "tonic",
  "tower 0.5.1",
  "tracing",
@@ -1289,8 +1259,6 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-build",
- "tonic-ntls",
- "tonic-rustls",
  "tonic-tls",
 ]
 

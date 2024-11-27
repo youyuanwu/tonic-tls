@@ -29,7 +29,7 @@ mod tests {
         ) -> Result<Response<HelloReply>, Status> {
             let remote_addr = request
                 .extensions()
-                .get::<tonic_rustls::SslConnectInfo<TcpConnectInfo>>()
+                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
                 .and_then(|info| info.get_ref().remote_addr());
             println!("Got a request from {:?}", remote_addr);
 
@@ -50,7 +50,7 @@ mod tests {
         ) -> Result<Response<HelloReply>, Status> {
             let remote_addr = request
                 .extensions()
-                .get::<tonic_ntls::SslConnectInfo<TcpConnectInfo>>()
+                .get::<tonic_tls::native::SslConnectInfo<TcpConnectInfo>>()
                 .and_then(|info| info.get_ref().remote_addr());
             println!("Got a request from {:?}", remote_addr);
 
@@ -64,8 +64,8 @@ mod tests {
     async fn connect_rustls_tonic_channel(
         cert: &CertificateDer<'static>,
         addr: SocketAddr,
-    ) -> Result<Channel, tonic_rustls::Error> {
-        use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
+    ) -> Result<Channel, tonic_tls::Error> {
+        use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 
         let url = format!("https://{}", addr).parse().unwrap();
         let mut root_cert_store = RootCertStore::empty();
@@ -76,10 +76,10 @@ mod tests {
         let connector = TlsConnector::from(Arc::new(config));
         let dnsname = ServerName::try_from("localhost").unwrap();
 
-        tonic_rustls::new_endpoint()
-            .connect_with_connector(tonic_rustls::connector(url, connector, dnsname))
+        tonic_tls::new_endpoint()
+            .connect_with_connector(tonic_tls::rustls::connector(url, connector, dnsname))
             .await
-            .map_err(tonic_rustls::Error::from)
+            .map_err(tonic_tls::Error::from)
     }
 
     async fn connect_ntls_tonic_channel(
@@ -93,10 +93,10 @@ mod tests {
         let connector = tokio_native_tls::TlsConnector::from(tc);
         let url = format!("https://{}", addr).parse().unwrap();
         let dnsname = "localhost".to_string();
-        tonic_rustls::new_endpoint()
-            .connect_with_connector(tonic_ntls::connector(url, connector, dnsname))
+        tonic_tls::new_endpoint()
+            .connect_with_connector(tonic_tls::native::connector(url, connector, dnsname))
             .await
-            .map_err(tonic_rustls::Error::from)
+            .map_err(tonic_tls::Error::from)
     }
 
     // creates a listener on a random port from os, and return the addr.
@@ -111,8 +111,8 @@ mod tests {
         cert: &CertificateDer<'static>,
         key: &PrivateKeyDer<'static>,
     ) -> TlsAcceptor {
-        let config = rustls::ServerConfig::builder_with_provider(
-            rustls::crypto::ring::default_provider().into(),
+        let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(
+            tokio_rustls::rustls::crypto::ring::default_provider().into(),
         )
         .with_safe_default_protocol_versions()
         .unwrap()
@@ -128,7 +128,7 @@ mod tests {
         tcp_s: TcpListenerStream,
         tls_acceptor: tokio_rustls::TlsAcceptor,
     ) {
-        let incoming = tonic_rustls::incoming(tcp_s, tls_acceptor);
+        let incoming = tonic_tls::rustls::incoming(tcp_s, tls_acceptor);
 
         let greeter = RustlsGreeter {};
         tonic::transport::Server::builder()
@@ -151,7 +151,7 @@ mod tests {
         tcp_s: TcpListenerStream,
         tls_acceptor: tokio_native_tls::TlsAcceptor,
     ) {
-        let incoming = tonic_ntls::incoming(tcp_s, tls_acceptor);
+        let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);
 
         let greeter = NtlsGreeter {};
         tonic::transport::Server::builder()

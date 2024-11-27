@@ -1,5 +1,4 @@
 use futures::Stream;
-use rustls::pki_types::CertificateDer;
 use std::{
     fmt::Debug,
     pin::Pin,
@@ -7,13 +6,11 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_rustls::rustls::pki_types::CertificateDer;
 use tonic::transport::server::Connected;
 
 mod client;
-pub use client::{connector, new_endpoint};
-
-/// Wrapper error type.
-pub type Error = tonic_tls::Error;
+pub use client::connector;
 
 #[derive(Clone)]
 struct RustlsAcceptor(tokio_rustls::TlsAcceptor);
@@ -24,30 +21,30 @@ impl RustlsAcceptor {
     }
 }
 
-impl<S> tonic_tls::TlsAcceptor<S> for RustlsAcceptor
+impl<S> crate::TlsAcceptor<S> for RustlsAcceptor
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     type TlsStream = TlsStream<S>;
-    async fn accept(&self, stream: S) -> Result<TlsStream<S>, tonic_tls::Error> {
+    async fn accept(&self, stream: S) -> Result<TlsStream<S>, crate::Error> {
         self.0
             .accept(stream)
             .await
             .map(|s| TlsStream { inner: s })
-            .map_err(tonic_tls::Error::from)
+            .map_err(crate::Error::from)
     }
 }
 
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
     acceptor: tokio_rustls::TlsAcceptor,
-) -> impl Stream<Item = Result<TlsStream<IO>, Error>>
+) -> impl Stream<Item = Result<TlsStream<IO>, crate::Error>>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,
 {
     let acceptor = RustlsAcceptor::new(acceptor);
-    tonic_tls::incoming_inner::<IO, IE, RustlsAcceptor, TlsStream<IO>>(incoming, acceptor)
+    crate::incoming_inner::<IO, IE, RustlsAcceptor, TlsStream<IO>>(incoming, acceptor)
 }
 
 /// A `TlsStream` wrapper type that implements tokio's io traits

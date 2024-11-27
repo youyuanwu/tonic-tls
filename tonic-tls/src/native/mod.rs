@@ -23,17 +23,17 @@ impl NativeTlsAcceptor {
     }
 }
 
-impl<S> tonic_tls::TlsAcceptor<S> for NativeTlsAcceptor
+impl<S> crate::TlsAcceptor<S> for NativeTlsAcceptor
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     type TlsStream = TlsStreamWrapper<S>;
-    async fn accept(&self, stream: S) -> Result<TlsStreamWrapper<S>, tonic_tls::Error> {
+    async fn accept(&self, stream: S) -> Result<TlsStreamWrapper<S>, crate::Error> {
         self.0
             .accept(stream)
             .await
             .map(|s| TlsStreamWrapper(s))
-            .map_err(tonic_tls::Error::from)
+            .map_err(crate::Error::from)
     }
 }
 
@@ -46,7 +46,7 @@ where
     IE: Into<crate::Error>,
 {
     let acceptor = NativeTlsAcceptor::new(acceptor);
-    tonic_tls::incoming_inner::<IO, IE, NativeTlsAcceptor, TlsStreamWrapper<IO>>(incoming, acceptor)
+    crate::incoming_inner::<IO, IE, NativeTlsAcceptor, TlsStreamWrapper<IO>>(incoming, acceptor)
 }
 
 #[derive(Debug)]

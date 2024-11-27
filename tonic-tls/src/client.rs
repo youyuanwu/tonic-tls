@@ -8,6 +8,12 @@ use tokio::{
 use tonic::transport::Uri;
 use tower::Service;
 
+/// Creates an endpoint with and local uri that is never used.
+/// Use `connector` to make connections.
+pub fn new_endpoint() -> tonic::transport::Endpoint {
+    tonic::transport::Endpoint::from_static("http://[::]:50051")
+}
+
 pub trait TlsConnector<S>: Clone + Send + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
