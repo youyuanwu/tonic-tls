@@ -73,14 +73,8 @@ impl<S: Connected + AsyncRead + AsyncWrite> Connected for TlsStream<S> {
     fn connect_info(&self) -> Self::ConnectInfo {
         let inner = self.inner.get_ref();
         let conn = inner.get_ref().get_ref().connect_info();
-        let certs = inner
-            .peer_certificate()
-            .ok()
-            .and_then(|x| Some(Arc::new(x)));
-        SslConnectInfo {
-            inner: conn,
-            certs: certs.into(),
-        }
+        let certs = inner.peer_certificate().ok().map(Arc::new);
+        SslConnectInfo { inner: conn, certs }
     }
 }
 
@@ -122,7 +116,7 @@ where
 ///
 /// This type will be accessible through [request extensions](tonic::Request::extensions).
 ///
-/// See [`Connected`](tonic::transport::server::Connected) for more details.
+/// See [`Connected`] for more details.
 #[derive(Debug, Clone)]
 pub struct SslConnectInfo<T> {
     inner: T,

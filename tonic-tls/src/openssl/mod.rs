@@ -120,7 +120,7 @@ where
 ///
 /// This type will be accessible through [request extensions](tonic::Request::extensions).
 ///
-/// See [`Connected`](tonic::transport::server::Connected) for more details.
+/// See [`Connected`] for more details.
 #[derive(Debug, Clone)]
 pub struct SslConnectInfo<T> {
     inner: T,

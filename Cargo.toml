@@ -5,7 +5,7 @@ members = [
 ]
 
 [workspace.dependencies]
-tonic-tls = { path = "tonic-tls" }
+tonic-tls = { path = "tonic-tls" , default-features = true}
 
 tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
