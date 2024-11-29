@@ -4,10 +4,24 @@ on: [push, pull_request]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
     steps:
     - uses: actions/checkout@v4
     
+    # on windows we need to install openssl
+    - name: Get vcpkg
+      if: runner.os == 'Windows'
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: dd3adcf020e69077e83e92a0a293ceca734f6288
+
+    - name: vcpkg install
+      if: runner.os == 'Windows'
+      run: vcpkg install openssl:x64-windows-static-md
+
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
       with:
