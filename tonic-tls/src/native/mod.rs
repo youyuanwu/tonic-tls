@@ -11,6 +11,7 @@ use tokio_native_tls::{TlsAcceptor, TlsStream};
 mod client;
 pub use client::connector;
 
+/// Internal implementation of acceptor wrapper.
 #[derive(Clone)]
 struct NativeTlsAcceptor(TlsAcceptor);
 
@@ -34,15 +35,32 @@ where
     }
 }
 
+/// Wraps the incoming (tcp) stream into a native tls stream, which
+/// can be used to run tonic server.
+/// Example:
+/// ```ignore
+/// async fn run_openssl_tonic_server(
+///  tcp_s: TcpListenerStream,
+///  tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
+/// ) {
+/// let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);
+/// let greeter = Greeter {};
+/// tonic::transport::Server::builder()
+///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///     .serve_with_incoming(incoming)
+///     .await
+///     .unwrap();
+/// }
+/// ```
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
-    acceptor: TlsAcceptor,
+    acceptor: tokio_native_tls::native_tls::TlsAcceptor,
 ) -> impl Stream<Item = Result<TlsStreamWrapper<IO>, crate::Error>>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,
 {
-    let acceptor = NativeTlsAcceptor::new(acceptor);
+    let acceptor = NativeTlsAcceptor::new(tokio_native_tls::TlsAcceptor::from(acceptor));
     crate::incoming_inner::<IO, IE, NativeTlsAcceptor, TlsStreamWrapper<IO>>(incoming, acceptor)
 }
 

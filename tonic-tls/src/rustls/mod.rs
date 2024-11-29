@@ -12,6 +12,7 @@ use tonic::transport::server::Connected;
 mod client;
 pub use client::connector;
 
+/// Internal implementation of acceptor wrapper.
 #[derive(Clone)]
 struct RustlsAcceptor(tokio_rustls::TlsAcceptor);
 
@@ -35,15 +36,32 @@ where
     }
 }
 
+/// Wraps the incoming (tcp) stream into a rustls stream, which
+/// can be used to run tonic server.
+/// Example:
+/// ```ignore
+/// async fn run_openssl_tonic_server(
+///  tcp_s: TcpListenerStream,
+///  server_config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
+/// ) {
+/// let incoming = tonic_tls::rustls::incoming(tcp_s, server_config);
+/// let greeter = Greeter {};
+/// tonic::transport::Server::builder()
+///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///     .serve_with_incoming(incoming)
+///     .await
+///     .unwrap();
+/// }
+/// ```
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
-    acceptor: tokio_rustls::TlsAcceptor,
+    server_config: Arc<tokio_rustls::rustls::ServerConfig>,
 ) -> impl Stream<Item = Result<TlsStream<IO>, crate::Error>>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,
 {
-    let acceptor = RustlsAcceptor::new(acceptor);
+    let acceptor = RustlsAcceptor::new(tokio_rustls::TlsAcceptor::from(server_config));
     crate::incoming_inner::<IO, IE, RustlsAcceptor, TlsStream<IO>>(incoming, acceptor)
 }
 

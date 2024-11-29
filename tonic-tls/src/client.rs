@@ -9,11 +9,13 @@ use tonic::transport::Uri;
 use tower::Service;
 
 /// Creates an endpoint with and local uri that is never used.
-/// Use `connector` to make connections.
+/// Use connector like [connector](super::openssl::connector) to make connections.
 pub fn new_endpoint() -> tonic::transport::Endpoint {
     tonic::transport::Endpoint::from_static("http://[::]:50051")
 }
 
+/// Not intended to be used by applications directly.
+/// To add a new tls backend, implment this and pass it into [connector_inner].
 pub trait TlsConnector<S>: Clone + Send + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
@@ -27,6 +29,8 @@ where
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, crate::Error>> + Send;
 }
 
+/// Not intended to be used by applications directly.
+/// Applications should use the tls backend api, for example [super::openssl::connector]
 pub fn connector_inner<C, TS>(
     uri: Uri,
     ssl_conn: C,

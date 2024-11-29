@@ -12,6 +12,7 @@ use tonic::transport::server::Connected;
 mod client;
 pub use client::connector;
 
+/// Internal implementation of acceptor wrapper.
 #[derive(Clone)]
 struct SchannelAcceptor {
     inner: Arc<tokio::sync::Mutex<tokio_schannel::TlsAcceptor>>,
@@ -47,16 +48,34 @@ where
     }
 }
 
+/// Wraps the incoming (tcp) stream into a schannel stream, which
+/// can be used to run tonic server.
+/// Example:
+/// ```ignore
+/// async fn run_openssl_tonic_server(
+///  tcp_s: TcpListenerStream,
+///  builder: schannel::tls_stream::Builder,
+///  cred: schannel::schannel_cred::SchannelCred,
+/// ) {
+/// let incoming = tonic_tls::schannel::incoming(tcp_s, builder, cred);
+/// let greeter = Greeter {};
+/// tonic::transport::Server::builder()
+///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///     .serve_with_incoming(incoming)
+///     .await
+///     .unwrap();
+/// }
+/// ```
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
-    acceptor: tokio_schannel::TlsAcceptor,
+    builder: schannel::tls_stream::Builder,
     cred: schannel::schannel_cred::SchannelCred,
 ) -> impl Stream<Item = Result<TlsStream<IO>, crate::Error>>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,
 {
-    let acceptor = SchannelAcceptor::new(acceptor, cred);
+    let acceptor = SchannelAcceptor::new(tokio_schannel::TlsAcceptor::new(builder), cred);
     crate::incoming_inner::<IO, IE, SchannelAcceptor, TlsStream<IO>>(incoming, acceptor)
 }
 

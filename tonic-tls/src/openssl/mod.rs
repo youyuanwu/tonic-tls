@@ -16,6 +16,7 @@ pub use client::connector;
 /// value that can be passed directly to OpenSSL.
 pub const ALPN_H2_WIRE: &[u8] = b"\x02h2";
 
+/// Internal implementation of acceptor wrapper.
 #[derive(Clone)]
 struct OpensslTlsAcceptor(SslAcceptor);
 
@@ -38,6 +39,24 @@ where
     }
 }
 
+/// Wraps the incoming (tcp) stream into a openssl stream, which
+/// can be used to run tonic server.
+/// Example:
+/// ```ignore
+/// async fn run_openssl_tonic_server(
+///  token: CancellationToken,
+///  tcp_s: TcpListenerStream,
+///  tls_acceptor: openssl::ssl::SslAcceptor,
+/// ) {
+/// let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
+/// let greeter = Greeter {};
+/// tonic::transport::Server::builder()
+///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///     .serve_with_incoming_shutdown(incoming, async move { token.cancelled().await })
+///     .await
+///     .unwrap();
+/// }
+/// ```
 pub fn incoming<IO, IE>(
     incoming: impl Stream<Item = Result<IO, IE>>,
     acceptor: SslAcceptor,
@@ -51,7 +70,7 @@ where
 }
 
 /// A `SslStream` wrapper type that implements tokio's io traits
-/// and tonic's `Connected` trait.
+/// and tonic's [Connected] trait.
 #[derive(Debug)]
 pub struct SslStream<S> {
     inner: tokio_openssl::SslStream<S>,

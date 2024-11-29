@@ -3,6 +3,7 @@ use tokio::net::TcpStream;
 use tonic::transport::Uri;
 use tower::Service;
 
+/// Internal implementation of connector wrapper.
 #[derive(Clone)]
 struct OpensslConnector(openssl::ssl::SslConnector);
 
@@ -25,6 +26,22 @@ impl crate::TlsConnector<TcpStream> for OpensslConnector {
     }
 }
 
+/// tonic client connector to connect to https endpoint at addr using
+/// openssl settings in ssl.
+/// domain is the server name to validate.
+/// See [connect](openssl::ssl::SslConnector::connect) for details.
+/// # Examples
+/// ```
+/// async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
+///     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
+///         .connect_with_connector(tonic_tls::openssl::connector(
+///             "https:://localhost:12345".parse().unwrap(),
+///             ssl_conn,
+///            "localhost".to_string(),
+///         ))
+///         .await.unwrap();
+/// }
+/// ```
 pub fn connector(
     uri: Uri,
     ssl_conn: openssl::ssl::SslConnector,

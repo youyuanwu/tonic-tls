@@ -79,11 +79,14 @@ mod tests {
             let config = ClientConfig::builder()
                 .with_root_certificates(root_cert_store)
                 .with_no_client_auth();
-            let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
             let dnsname = ServerName::try_from("localhost").unwrap();
 
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::rustls::connector(url, connector, dnsname))
+                .connect_with_connector(tonic_tls::rustls::connector(
+                    url,
+                    Arc::new(config),
+                    dnsname,
+                ))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -105,7 +108,7 @@ mod tests {
         pub fn create_rustls_acceptor(
             cert: &CertificateDer<'static>,
             key: &PrivateKeyDer<'static>,
-        ) -> tokio_rustls::TlsAcceptor {
+        ) -> Arc<tokio_rustls::rustls::ServerConfig> {
             let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(
                 tokio_rustls::rustls::crypto::ring::default_provider().into(),
             )
@@ -114,14 +117,14 @@ mod tests {
             .with_no_client_auth()
             .with_single_cert(vec![cert.clone()], key.clone_key())
             .unwrap();
-            tokio_rustls::TlsAcceptor::from(Arc::new(config))
+            Arc::new(config)
         }
 
         // Run the tonic server on the current thread until token is cancelled.
         async fn run_rustls_tonic_server(
             token: CancellationToken,
             tcp_s: TcpListenerStream,
-            tls_acceptor: tokio_rustls::TlsAcceptor,
+            tls_acceptor: Arc<tokio_rustls::rustls::ServerConfig>,
         ) {
             let incoming = tonic_tls::rustls::incoming(tcp_s, tls_acceptor);
 
@@ -246,12 +249,12 @@ mod tests {
             (cert2, key)
         }
 
-        pub fn create_ntls_acceptor(key: &native_tls::Identity) -> tokio_native_tls::TlsAcceptor {
-            tokio_native_tls::TlsAcceptor::from(
-                native_tls::TlsAcceptor::builder(key.clone())
-                    .build()
-                    .unwrap(),
-            )
+        pub fn create_ntls_acceptor(
+            key: &native_tls::Identity,
+        ) -> tokio_native_tls::native_tls::TlsAcceptor {
+            native_tls::TlsAcceptor::builder(key.clone())
+                .build()
+                .unwrap()
         }
 
         async fn connect_ntls_tonic_channel(
@@ -263,11 +266,10 @@ mod tests {
                 .add_root_certificate(cert.clone())
                 .build()
                 .unwrap();
-            let connector = tokio_native_tls::TlsConnector::from(tc);
             let url = format!("https://{}", addr).parse().unwrap();
             let dnsname = "localhost".to_string();
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::native::connector(url, connector, dnsname))
+                .connect_with_connector(tonic_tls::native::connector(url, tc, dnsname))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -275,7 +277,7 @@ mod tests {
         async fn run_ntls_tonic_server(
             token: CancellationToken,
             tcp_s: TcpListenerStream,
-            tls_acceptor: tokio_native_tls::TlsAcceptor,
+            tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
         ) {
             let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);
 
@@ -623,17 +625,16 @@ mod tests {
                 .unwrap();
             builder.cert_store(cert_store);
 
-            let connector = tokio_schannel::TlsConnector::new(builder);
             let url = format!("https://{}", addr).parse().unwrap();
             let creds = schannel::schannel_cred::SchannelCred::builder()
                 .acquire(schannel::schannel_cred::Direction::Outbound)
                 .unwrap();
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::schannel::connector(url, connector, creds))
+                .connect_with_connector(tonic_tls::schannel::connector(url, builder, creds))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
-        pub fn create_schannel_acceptor() -> tokio_schannel::TlsAcceptor {
+        pub fn create_schannel_acceptor() -> schannel::tls_stream::Builder {
             let mut builder = schannel::tls_stream::Builder::new();
             builder.verify_callback(|ctx| {
                 match ctx.result() {
@@ -648,13 +649,13 @@ mod tests {
             // TODO: peer cert validation is missing in schannel crate?
             // Possibly this: https://github.com/steffengy/schannel-rs/issues/91
             builder.domain("localhost");
-            tokio_schannel::TlsAcceptor::new(builder)
+            builder
         }
 
         async fn run_schannel_tonic_server(
             token: CancellationToken,
             tcp_s: TcpListenerStream,
-            tls_acceptor: tokio_schannel::TlsAcceptor,
+            tls_acceptor: schannel::tls_stream::Builder,
             creds: schannel::schannel_cred::SchannelCred,
         ) {
             let incoming = tonic_tls::schannel::incoming(tcp_s, tls_acceptor, creds);

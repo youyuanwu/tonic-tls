@@ -1,3 +1,41 @@
+//! A tls adaptor for `tonic`.
+//!
+//! Supports various tls backend:
+//! * [native_tls](tokio_native_tls::native_tls) in mod [native].
+//! * [openssl](tokio_openssl) in mod [openssl].
+//! * [rustls](tokio_rustls::rustls) in mod [rustls].
+//! * [schannel](tokio_schannel) in mod [schannel].
+//!
+//! Server example for openssl:
+//! ```ignore
+//! async fn run_openssl_tonic_server(
+//!     tcp_s: TcpListenerStream,
+//!     tls_acceptor: openssl::ssl::SslAcceptor,
+//! ) {
+//! let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
+//! let greeter = Greeter {};
+//! tonic::transport::Server::builder()
+//!     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+//!     .serve_with_incoming(incoming)
+//!     .await
+//!     .unwrap();
+//! }
+//! ```
+//!
+//! Client example:
+//! ```
+//! async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
+//!     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
+//!         .connect_with_connector(tonic_tls::openssl::connector(
+//!             "https:://localhost:12345".parse().unwrap(),
+//!             ssl_conn,
+//!            "localhost".to_string(),
+//!         ))
+//!         .await.unwrap();
+//! }
+//! ```
+#![doc(html_root_url = "https://docs.rs/tonic-tls/latest/tonic_tls/")]
+
 use futures::TryStreamExt;
 use std::fmt::Debug;
 use std::io;
@@ -20,8 +58,13 @@ pub mod openssl;
 #[cfg(all(feature = "schannel", target_os = "windows"))]
 pub mod schannel;
 
+/// Common boxed error.
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+/// Trait for abstracting tls backend's stream accept impl. Not intended to be used directly
+/// by applications.
+/// To add a new tls backend, this trait needs to be implemented, and the
+/// implementation needs to be passed to [incoming_inner].
 pub trait TlsAcceptor<S>: Clone + Send + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
@@ -33,7 +76,12 @@ where
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, Error>> + Send;
 }
 
-/// A is acceptor, TS is the tls stream type.
+/// Wraps the incoming stream into a tls stream.
+/// Use this only when implementing tls backends.
+/// For applications, use a tls backend instead. For example [incomming](openssl::incoming).
+///
+/// IO is the input io type, IE is the input error type.
+/// A is acceptor, TS is the output tls stream type.
 pub fn incoming_inner<IO, IE, A, TS>(
     incoming: impl Stream<Item = Result<IO, IE>>,
     acceptor: A,

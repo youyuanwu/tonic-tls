@@ -4,6 +4,7 @@ use tokio::net::TcpStream;
 use tonic::transport::Uri;
 use tower::Service;
 
+/// Internal implementation of connector wrapper.
 #[derive(Clone)]
 struct SchannelConnector {
     inner: Arc<tokio::sync::Mutex<tokio_schannel::TlsConnector>>,
@@ -28,9 +29,26 @@ impl crate::TlsConnector<TcpStream> for SchannelConnector {
     }
 }
 
+/// tonic client connector to connect to https endpoint at addr using
+/// schannel.
+/// See [connect](schannel::tls_stream::Builder::connect) for details.
+/// # Examples
+/// ```
+/// async fn connect_tonic_channel(builder: schannel::tls_stream::Builder,
+///         cred: schannel::schannel_cred::SchannelCred)
+/// -> tonic::transport::Channel {
+///     tonic_tls::new_endpoint()
+///         .connect_with_connector(tonic_tls::schannel::connector(
+///             "https:://localhost:12345".parse().unwrap(),
+///             builder,
+///             cred,
+///         ))
+///         .await.unwrap()
+/// }
+/// ```
 pub fn connector(
     uri: Uri,
-    ssl_conn: tokio_schannel::TlsConnector,
+    builder: schannel::tls_stream::Builder,
     cred: schannel::schannel_cred::SchannelCred,
 ) -> impl Service<
     Uri,
@@ -39,7 +57,9 @@ pub fn connector(
     Error = crate::Error,
 > {
     let ssl_conn = SchannelConnector {
-        inner: Arc::new(tokio::sync::Mutex::new(ssl_conn)),
+        inner: Arc::new(tokio::sync::Mutex::new(tokio_schannel::TlsConnector::new(
+            builder,
+        ))),
     };
     crate::connector_inner(uri, ssl_conn, cred)
 }
