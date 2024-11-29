@@ -1171,6 +1171,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-schannel"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe31a8dc1d20c8a4346e16904eecd6b293e2f9a65819d29aaad8a8156b256d25"
+dependencies = [
+ "schannel",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-stream"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1247,10 +1257,12 @@ dependencies = [
  "hyper",
  "hyper-util",
  "openssl",
+ "schannel",
  "tokio",
  "tokio-native-tls",
  "tokio-openssl",
  "tokio-rustls",
+ "tokio-schannel",
  "tonic",
  "tower 0.5.1",
  "tracing",
@@ -1265,9 +1277,11 @@ dependencies = [
  "prost",
  "rcgen",
  "rustls",
+ "schannel",
  "tokio",
  "tokio-native-tls",
  "tokio-rustls",
+ "tokio-schannel",
  "tokio-stream",
  "tokio-util",
  "tonic",

@@ -17,6 +17,9 @@ pub mod rustls;
 #[cfg(feature = "openssl")]
 pub mod openssl;
 
+#[cfg(all(feature = "schannel", target_os = "windows"))]
+pub mod schannel;
+
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub trait TlsAcceptor<S>: Clone + Send + 'static

@@ -24,6 +24,10 @@ tokio-native-tls = "0.3"
 tokio-openssl = "0.6"
 openssl = "0.10"
 
+# schannel
+tokio-schannel = "0.1"
+schannel = "0.1"
+
 # for dev only
 rcgen = {version = "0.13", default-features = true }
 tokio-util = "0.7"

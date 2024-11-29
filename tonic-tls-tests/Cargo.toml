@@ -17,9 +17,11 @@ rcgen.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
 prost.workspace = true
-tonic-tls = { workspace = true, features = ["native", "rustls", "openssl"] }
+tonic-tls = { workspace = true, features = ["native", "rustls", "openssl", "schannel"] }
 futures.workspace = true
 tokio-native-tls.workspace = true
+tokio-schannel.workspace = true
+schannel.workspace = true
 
 [build-dependencies]
 tonic-build = "0.12"
