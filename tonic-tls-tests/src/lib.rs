@@ -1,12 +1,10 @@
 pub mod openssl_gen;
-
+pub mod helloworld {
+    tonic::include_proto!("helloworld");
+}
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
-
-    pub mod helloworld {
-        tonic::include_proto!("helloworld");
-    }
 
     // creates a listener on a random port from os, and return the addr.
     pub async fn create_listener_server() -> (tokio::net::TcpListener, std::net::SocketAddr) {
@@ -39,7 +37,7 @@ mod tests {
     mod rustls_test {
         use std::{net::SocketAddr, sync::Arc};
 
-        use super::helloworld::{self, HelloReply, HelloRequest};
+        use crate::helloworld::{self, HelloReply, HelloRequest};
         use rustls::pki_types::{CertificateDer, PrivateKeyDer};
         use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
@@ -206,7 +204,7 @@ mod tests {
     mod ntls_test {
         use std::net::SocketAddr;
 
-        use super::helloworld::{self, HelloReply, HelloRequest};
+        use crate::helloworld::{self, HelloReply, HelloRequest};
         use tokio_native_tls::native_tls;
         use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
@@ -348,8 +346,8 @@ mod tests {
     }
 
     mod openssl_test {
-        use super::helloworld::{self, HelloReply, HelloRequest};
         use super::*;
+        use crate::helloworld::{self, HelloReply, HelloRequest};
         use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
         use tonic::{
@@ -508,7 +506,7 @@ mod tests {
     mod schannel_test {
         use std::net::SocketAddr;
 
-        use super::helloworld::{self, HelloReply, HelloRequest};
+        use crate::helloworld::{self, HelloReply, HelloRequest};
 
         use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
@@ -792,5 +790,38 @@ mod tests {
         //     client_h.await.unwrap();
         //     server_h.await.unwrap();
         // }
+    }
+
+    // run examples
+    #[tokio::test]
+    async fn example_test() {
+        let curr_dir = std::env::current_dir().unwrap();
+        println!("curr_dir: {:?}", curr_dir);
+
+        println!("launching server");
+        let mut child_server = std::process::Command::new("cargo")
+            .arg("run")
+            .arg("--example")
+            .arg("helloworld-server")
+            .spawn()
+            .expect("Couldn't run server");
+
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        println!("run client");
+        let mut child_client = std::process::Command::new("cargo")
+            .arg("run")
+            .arg("--example")
+            .arg("helloworld-client")
+            .arg("--")
+            .arg("--nocapture")
+            .spawn()
+            .expect("Couldn't run client");
+
+        let status = child_client.wait().unwrap();
+        assert!(status.success());
+
+        child_server.kill().expect("!kill");
+        child_server.wait().unwrap();
     }
 }

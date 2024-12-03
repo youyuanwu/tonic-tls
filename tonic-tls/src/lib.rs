@@ -6,6 +6,7 @@
 //! * [rustls](tokio_rustls::rustls) in mod [rustls].
 //! * [schannel](tokio_schannel) in mod [schannel].
 //!
+//! For full examples see [examples](https://github.com/youyuanwu/tonic-tls/tree/main/tonic-tls-tests/examples).
 //! Server example for openssl:
 //! ```ignore
 //! async fn run_openssl_tonic_server(

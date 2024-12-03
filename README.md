@@ -20,6 +20,7 @@ tonic-tls = { version="*" , default-features = false, features = ["openssl"] }
 ```
 
 ## Examples
+For full examples see [examples](./tonic-tls-tests/examples/)
 ```rs
 // Server example for openssl:
 async fn run_openssl_tonic_server(
@@ -41,7 +42,7 @@ tonic::transport::Server::builder()
 async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
         .connect_with_connector(tonic_tls::openssl::connector(
-            "https:://localhost:12345".parse().unwrap(),
+            "https://localhost:12345".parse().unwrap(),
             ssl_conn,
           "localhost".to_string(),
         ))

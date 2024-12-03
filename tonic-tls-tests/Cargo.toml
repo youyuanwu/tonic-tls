@@ -4,19 +4,27 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[[example]]
+name = "helloworld-server"
+path = "examples/server.rs"
+
+[[example]]
+name = "helloworld-client"
+path = "examples/client.rs"
+
 [dependencies]
 # openssl gen
-openssl = "0.10"
+openssl.workspace = true
+tonic.workspace = true
+prost.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"]}
 rustls = {workspace =  true, features = ["std", "ring"]}
 tokio-rustls.workspace = true
-tonic.workspace = true
 rcgen.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
-prost.workspace = true
 tonic-tls = { workspace = true }
 futures.workspace = true
 tokio-native-tls.workspace = true
