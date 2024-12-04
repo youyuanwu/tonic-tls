@@ -52,18 +52,18 @@ where
 /// can be used to run tonic server.
 /// Example:
 /// ```ignore
-/// async fn run_openssl_tonic_server(
-///  tcp_s: TcpListenerStream,
-///  builder: schannel::tls_stream::Builder,
-///  cred: schannel::schannel_cred::SchannelCred,
+/// async fn run_tonic_server(
+///     tcp_s: tonic::transport::server::TcpIncoming,
+///     builder: schannel::tls_stream::Builder,
+///     cred: schannel::schannel_cred::SchannelCred,
 /// ) {
-/// let incoming = tonic_tls::schannel::incoming(tcp_s, builder, cred);
-/// let greeter = Greeter {};
-/// tonic::transport::Server::builder()
-///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-///     .serve_with_incoming(incoming)
-///     .await
-///     .unwrap();
+///     let incoming = tonic_tls::schannel::incoming(tcp_s, builder, cred);
+///     let greeter = Greeter {};
+///     tonic::transport::Server::builder()
+///         .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///         .serve_with_incoming(incoming)
+///         .await
+///         .unwrap();
 /// }
 /// ```
 pub fn incoming<IO, IE>(

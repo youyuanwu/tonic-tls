@@ -74,9 +74,11 @@ mod tests {
             let url = format!("https://{}", addr).parse().unwrap();
             let mut root_cert_store = RootCertStore::empty();
             root_cert_store.add(cert.clone()).unwrap();
-            let config = ClientConfig::builder()
+            let mut config = ClientConfig::builder()
                 .with_root_certificates(root_cert_store)
                 .with_no_client_auth();
+            config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
+
             let dnsname = ServerName::try_from("localhost").unwrap();
 
             tonic_tls::new_endpoint()
@@ -97,7 +99,7 @@ mod tests {
             use rustls::pki_types::pem::PemObject;
             let key = PrivateKeyDer::from_pem(
                 rustls::pki_types::pem::SectionKind::PrivateKey,
-                key_pair.serialize_der().into(),
+                key_pair.serialize_der(),
             )
             .unwrap();
             (cert, key)
@@ -107,7 +109,7 @@ mod tests {
             cert: &CertificateDer<'static>,
             key: &PrivateKeyDer<'static>,
         ) -> Arc<tokio_rustls::rustls::ServerConfig> {
-            let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(
+            let mut config = tokio_rustls::rustls::ServerConfig::builder_with_provider(
                 tokio_rustls::rustls::crypto::ring::default_provider().into(),
             )
             .with_safe_default_protocol_versions()
@@ -115,6 +117,7 @@ mod tests {
             .with_no_client_auth()
             .with_single_cert(vec![cert.clone()], key.clone_key())
             .unwrap();
+            config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
             Arc::new(config)
         }
 
@@ -250,6 +253,7 @@ mod tests {
         pub fn create_ntls_acceptor(
             key: &native_tls::Identity,
         ) -> tokio_native_tls::native_tls::TlsAcceptor {
+            // TODO: native tls does not support server side alpn.
             native_tls::TlsAcceptor::builder(key.clone())
                 .build()
                 .unwrap()
@@ -262,6 +266,7 @@ mod tests {
             let tc = native_tls::TlsConnector::builder()
                 .disable_built_in_roots(true)
                 .add_root_certificate(cert.clone())
+                .request_alpns(&[std::str::from_utf8(tonic_tls::ALPN_H2).unwrap()])
                 .build()
                 .unwrap();
             let url = format!("https://{}", addr).parse().unwrap();
@@ -569,8 +574,7 @@ mod tests {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     "not a PKCS#8 key",
-                )
-                .into());
+                ));
             }
 
             let mut store = schannel::cert_store::Memory::new()?.into_store();
@@ -592,7 +596,7 @@ mod tests {
                 Ok(container) => container,
                 Err(_) => options.new_keyset(true).acquire(type_)?,
             };
-            container.import().import_pkcs8_pem(&key)?;
+            container.import().import_pkcs8_pem(key)?;
 
             cert.set_key_prov_info()
                 .container(&name)
@@ -622,6 +626,7 @@ mod tests {
                 .add_cert(root, schannel::cert_store::CertAdd::Always)
                 .unwrap();
             builder.cert_store(cert_store);
+            builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
 
             let url = format!("https://{}", addr).parse().unwrap();
             let creds = schannel::schannel_cred::SchannelCred::builder()
@@ -644,6 +649,7 @@ mod tests {
                 };
                 Ok(())
             });
+            builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
             // TODO: peer cert validation is missing in schannel crate?
             // Possibly this: https://github.com/steffengy/schannel-rs/issues/91
             builder.domain("localhost");
@@ -734,7 +740,7 @@ mod tests {
             sv_h.await.unwrap();
         }
 
-        // TODO: move
+        // TODO: move to tokio-schannel crate.
         // #[tokio::test]
         // async fn test_schannel() {
         //     let (_, key) = make_test_cert_schannel(vec![
@@ -799,29 +805,33 @@ mod tests {
         println!("curr_dir: {:?}", curr_dir);
 
         println!("launching server");
+
         let mut child_server = std::process::Command::new("cargo")
             .arg("run")
             .arg("--example")
             .arg("helloworld-server")
+            .stderr(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .expect("Couldn't run server");
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         println!("run client");
-        let mut child_client = std::process::Command::new("cargo")
+        let child_client = std::process::Command::new("cargo")
             .arg("run")
             .arg("--example")
             .arg("helloworld-client")
             .arg("--")
             .arg("--nocapture")
-            .spawn()
+            .output()
             .expect("Couldn't run client");
-
-        let status = child_client.wait().unwrap();
-        assert!(status.success());
+        assert!(child_client.status.success());
+        println!("client output: {:?}", child_client);
 
         child_server.kill().expect("!kill");
-        child_server.wait().unwrap();
+        let server_out = child_server.wait_with_output().unwrap();
+        // server kill may exit with code 1.
+        println!("server output: {:?}", server_out);
     }
 }

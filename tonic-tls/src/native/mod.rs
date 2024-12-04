@@ -39,8 +39,8 @@ where
 /// can be used to run tonic server.
 /// Example:
 /// ```ignore
-/// async fn run_openssl_tonic_server(
-///  tcp_s: TcpListenerStream,
+/// async fn run_tonic_server(
+///  tcp_s: tonic::transport::server::TcpIncoming,
 ///  tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
 /// ) {
 /// let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);

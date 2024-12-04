@@ -9,8 +9,8 @@
 //! For full examples see [examples](https://github.com/youyuanwu/tonic-tls/tree/main/tonic-tls-tests/examples).
 //! Server example for openssl:
 //! ```ignore
-//! async fn run_openssl_tonic_server(
-//!     tcp_s: TcpListenerStream,
+//! async fn run_tonic_server(
+//!     tcp_s: tonic::transport::server::TcpIncoming,
 //!     tls_acceptor: openssl::ssl::SslAcceptor,
 //! ) {
 //! let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
@@ -58,6 +58,10 @@ pub mod openssl;
 
 #[cfg(all(feature = "schannel", target_os = "windows"))]
 pub mod schannel;
+
+/// A const that contains the on the wire `h2` alpn value
+/// to pass to tls backends.
+pub const ALPN_H2: &[u8] = b"h2";
 
 /// Common boxed error.
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;

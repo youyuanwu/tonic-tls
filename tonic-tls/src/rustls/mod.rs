@@ -41,16 +41,16 @@ where
 /// Example:
 /// ```ignore
 /// async fn run_openssl_tonic_server(
-///  tcp_s: TcpListenerStream,
-///  server_config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
+///     tcp_s: tonic::transport::server::TcpIncoming,
+///     server_config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
 /// ) {
-/// let incoming = tonic_tls::rustls::incoming(tcp_s, server_config);
-/// let greeter = Greeter {};
-/// tonic::transport::Server::builder()
-///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-///     .serve_with_incoming(incoming)
-///     .await
-///     .unwrap();
+///     let incoming = tonic_tls::rustls::incoming(tcp_s, server_config);
+///     let greeter = Greeter {};
+///     tonic::transport::Server::builder()
+///         .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+///         .serve_with_incoming(incoming)
+///         .await
+///         .unwrap();
 /// }
 /// ```
 pub fn incoming<IO, IE>(

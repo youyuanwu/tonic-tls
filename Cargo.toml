@@ -34,3 +34,4 @@ tokio-util = "0.7"
 tokio-stream = { version = "0.1", features = ["net"] }
 prost = "0.13"
 rustls = { version = "0.23", default-features = false , features = ["std"]}
+native-tls = { version = "0.2", features = ["alpn"] }

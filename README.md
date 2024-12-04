@@ -24,7 +24,7 @@ For full examples see [examples](./tonic-tls-tests/examples/)
 ```rs
 // Server example for openssl:
 async fn run_openssl_tonic_server(
-    tcp_s: TcpListenerStream,
+    tcp_s: tonic::transport::server::TcpIncoming,
     tls_acceptor: openssl::ssl::SslAcceptor,
 ) {
 let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
@@ -39,12 +39,12 @@ tonic::transport::Server::builder()
 
 ```rs
 // client example for openssl:
-async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
+async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector) {
     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
         .connect_with_connector(tonic_tls::openssl::connector(
             "https://localhost:12345".parse().unwrap(),
             ssl_conn,
-          "localhost".to_string(),
+            "localhost".to_string(),
         ))
         .await.unwrap();
 }
