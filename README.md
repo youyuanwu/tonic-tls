@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://raw.githubusercontent.com/youyuanwu/tonic-tls/main/LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/tonic-tls)](https://crates.io/crates/tonic-tls)
 [![Documentation](https://docs.rs/tonic-tls/badge.svg)](https://docs.rs/tonic-tls)
+[![codecov](https://codecov.io/gh/youyuanwu/tonic-tls/graph/badge.svg?token=770RTTJ6R4)](https://codecov.io/gh/youyuanwu/tonic-tls)
 
 `tonic-tls` provides various tls backend plugins for grpc crate [tonic](https://github.com/hyperium/tonic).
 
