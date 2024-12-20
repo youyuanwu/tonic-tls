@@ -52,11 +52,15 @@ mod tests {
                 &self,
                 request: Request<HelloRequest>,
             ) -> Result<Response<HelloReply>, Status> {
-                let remote_addr = request
+                let conn_info = request
                     .extensions()
-                    .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                    .and_then(|info| info.get_ref().remote_addr());
-                println!("Got a request from {:?}", remote_addr);
+                    .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>();
+                let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
+                let peer_certs = conn_info.and_then(|i| i.peer_certs());
+                println!(
+                    "Got a request from {remote_addr:?} with certs: {}",
+                    peer_certs.is_some()
+                );
 
                 let reply = HelloReply {
                     message: format!("Hello {}!", request.into_inner().name),
@@ -222,11 +226,15 @@ mod tests {
                 &self,
                 request: Request<HelloRequest>,
             ) -> Result<Response<HelloReply>, Status> {
-                let remote_addr = request
+                let conn_info = request
                     .extensions()
-                    .get::<tonic_tls::native::SslConnectInfo<TcpConnectInfo>>()
-                    .and_then(|info| info.get_ref().remote_addr());
-                println!("Got a request from {:?}", remote_addr);
+                    .get::<tonic_tls::native::SslConnectInfo<TcpConnectInfo>>();
+                let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
+                let peer_certs = conn_info.and_then(|i| i.peer_certs());
+                println!(
+                    "Got a request from {remote_addr:?} with certs: {}",
+                    peer_certs.is_some()
+                );
 
                 let reply = HelloReply {
                     message: format!("Hello {}!", request.into_inner().name),
@@ -241,7 +249,6 @@ mod tests {
             let (cert, key) = super::make_test_cert2(subject_alt_names);
             let cert2 =
                 native_tls::Certificate::from_pem(cert.to_pem().unwrap().as_slice()).unwrap();
-            //let pkcs8 =
             let key = native_tls::Identity::from_pkcs8(
                 cert.to_pem().unwrap().as_slice(),
                 key.private_key_to_pem_pkcs8().unwrap().as_ref(),
@@ -367,11 +374,12 @@ mod tests {
                 &self,
                 request: Request<HelloRequest>,
             ) -> Result<Response<HelloReply>, Status> {
-                let remote_addr = request
+                let conn_info = request
                     .extensions()
-                    .get::<tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>>()
-                    .and_then(|info| info.get_ref().remote_addr());
-                println!("Got a request from {:?}", remote_addr);
+                    .get::<tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>>();
+                let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
+                let peer_certs = conn_info.and_then(|i| i.peer_certs());
+                println!("Got a request from {remote_addr:?} with certs: {peer_certs:?}");
 
                 let reply = HelloReply {
                     message: format!("Hello {}!", request.into_inner().name),
@@ -398,7 +406,10 @@ mod tests {
                 .set_alpn_protos(tonic_tls::openssl::ALPN_H2_WIRE)
                 .unwrap();
             let connector = connector.build();
-            let url = format!("https://{}", addr).parse().unwrap();
+            // use dns to test resolve
+            let url = format!("https://localhost:{}", addr.port())
+                .parse()
+                .unwrap();
             let dnsname = "localhost".to_string();
             tonic_tls::new_endpoint()
                 .connect_with_connector(tonic_tls::openssl::connector(url, connector, dnsname))
@@ -527,11 +538,15 @@ mod tests {
                 &self,
                 request: Request<HelloRequest>,
             ) -> Result<Response<HelloReply>, Status> {
-                let remote_addr = request
+                let conn_info = request
                     .extensions()
-                    .get::<tonic_tls::schannel::SslConnectInfo<TcpConnectInfo>>()
-                    .and_then(|info| info.get_ref().remote_addr());
-                println!("Got a request from {:?}", remote_addr);
+                    .get::<tonic_tls::schannel::SslConnectInfo<TcpConnectInfo>>();
+                let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
+                let peer_certs = conn_info.and_then(|i| i.peer_certs());
+                println!(
+                    "Got a request from {remote_addr:?} with certs: {}",
+                    peer_certs.is_some()
+                );
 
                 let reply = HelloReply {
                     message: format!("Hello {}!", request.into_inner().name),
