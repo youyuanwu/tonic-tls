@@ -12,18 +12,18 @@ struct SchannelConnector {
 
 impl crate::TlsConnector<TcpStream> for SchannelConnector {
     type TlsStream = tokio_schannel::TlsStream<TcpStream>;
-    type Domain = schannel::schannel_cred::SchannelCred;
+    type Arg = schannel::schannel_cred::SchannelCred;
 
     async fn connect(
         &self,
-        domain: schannel::schannel_cred::SchannelCred,
+        cred: schannel::schannel_cred::SchannelCred,
         stream: TcpStream,
     ) -> Result<Self::TlsStream, crate::Error> {
         // lock is needed because schannel inner is mutable
         self.inner
             .lock()
             .await
-            .connect(domain, stream)
+            .connect(cred, stream)
             .await
             .map_err(crate::Error::from)
     }

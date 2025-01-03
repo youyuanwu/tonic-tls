@@ -9,11 +9,11 @@ struct NativeConnector(tokio_native_tls::TlsConnector);
 
 impl crate::TlsConnector<TcpStream> for NativeConnector {
     type TlsStream = tokio_native_tls::TlsStream<TcpStream>;
-    type Domain = String;
+    type Arg = String;
 
     async fn connect(
         &self,
-        domain: Self::Domain,
+        domain: Self::Arg,
         stream: TcpStream,
     ) -> Result<Self::TlsStream, crate::Error> {
         self.0
