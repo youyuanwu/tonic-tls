@@ -21,10 +21,11 @@ where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     type TlsStream;
-    type Domain: Clone + Send;
+    /// Argument for connect.
+    type Arg: Clone + Send;
     fn connect(
         &self,
-        domain: Self::Domain,
+        arg: Self::Arg,
         stream: S,
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, crate::Error>> + Send;
 }
@@ -34,7 +35,7 @@ where
 pub fn connector_inner<C, TS>(
     uri: Uri,
     ssl_conn: C,
-    domain: C::Domain,
+    arg: C::Arg,
 ) -> impl Service<
     Uri,
     Response = impl hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
@@ -46,15 +47,14 @@ where
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     tower::service_fn(move |_: Uri| {
-        //let domain = domain.clone();
         let uri = uri.clone();
         let ssl_conn = ssl_conn.clone();
-        let domain = domain.clone();
+        let arg = arg.clone();
         async move {
             let addrs = dns_resolve(&uri).await?;
             // Connect and get ssl stream
             let stream = connect_tcp(addrs).await?;
-            let ssl_s = ssl_conn.connect(domain, stream).await?;
+            let ssl_s = ssl_conn.connect(arg, stream).await?;
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }
     })

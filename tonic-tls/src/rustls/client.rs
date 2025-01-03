@@ -10,11 +10,11 @@ struct RustlsConnector(tokio_rustls::TlsConnector);
 
 impl crate::TlsConnector<TcpStream> for RustlsConnector {
     type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
-    type Domain = tokio_rustls::rustls::pki_types::ServerName<'static>;
+    type Arg = tokio_rustls::rustls::pki_types::ServerName<'static>;
 
     async fn connect(
         &self,
-        domain: Self::Domain,
+        domain: Self::Arg,
         stream: TcpStream,
     ) -> Result<Self::TlsStream, crate::Error> {
         self.0

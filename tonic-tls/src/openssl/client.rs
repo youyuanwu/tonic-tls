@@ -9,11 +9,11 @@ struct OpensslConnector(openssl::ssl::SslConnector);
 
 impl crate::TlsConnector<TcpStream> for OpensslConnector {
     type TlsStream = tokio_openssl::SslStream<TcpStream>;
-    type Domain = String;
+    type Arg = String;
 
     async fn connect(
         &self,
-        domain: Self::Domain,
+        domain: Self::Arg,
         stream: TcpStream,
     ) -> Result<Self::TlsStream, crate::Error> {
         let ssl_config = self.0.configure()?;
