@@ -33,7 +33,7 @@ tokio-schannel.workspace = true
 schannel.workspace = true
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build.workspace = true
 
 # For protobuf rs code
 [package.metadata.rust-analyzer]

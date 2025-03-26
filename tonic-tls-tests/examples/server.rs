@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let greeter = MyGreeter::default();
 
     println!("GreeterServer listening on {}", addr);
-    let tcp_incoming = tonic::transport::server::TcpIncoming::new(addr, false, None).unwrap();
+    let tcp_incoming = tonic::transport::server::TcpIncoming::bind(addr).unwrap();
     let incoming = tonic_tls::openssl::incoming(tcp_incoming, tls_acceptor);
 
     tonic::transport::Server::builder()
