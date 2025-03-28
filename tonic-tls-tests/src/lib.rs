@@ -447,7 +447,7 @@ mod tests {
             tcp_s: TcpListenerStream,
             tls_acceptor: openssl::ssl::SslAcceptor,
         ) {
-            let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
+            let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_s, tls_acceptor);
 
             let greeter = OpensslGreeter {};
             tonic::transport::Server::builder()
