@@ -16,10 +16,10 @@
 //! # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
 //! # use core::convert::Infallible;
 //! # use std::error::Error;
-//! use tokio_native_tls::native_tls::TlsAcceptor;
-//! use tonic_tls::native::TlsIncoming;
+//! use openssl::ssl::SslAcceptor;
+//! use tonic_tls::openssl::TlsIncoming;
 //! # fn main() { }  // Cannot have type parameters, hence instead define:
-//! # fn run<S>(some_service: S, acceptor: TlsAcceptor) -> Result<(), Box<dyn Error + Send + Sync>>
+//! # fn run<S>(some_service: S, acceptor: SslAcceptor) -> Result<(), Box<dyn Error + Send + Sync>>
 //! # where
 //! #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
 //! #   S::Future: Send + 'static,
