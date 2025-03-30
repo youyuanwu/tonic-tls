@@ -8,21 +8,30 @@
 //!
 //! For full examples see [examples](https://github.com/youyuanwu/tonic-tls/tree/main/tonic-tls-tests/examples).
 //! Server example for openssl:
-//! ```ignore
-//! async fn run_tonic_server(
-//!     tcp_s: tonic::transport::server::TcpIncoming,
-//!     tls_acceptor: openssl::ssl::SslAcceptor,
-//! ) {
-//! let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
-//! let greeter = Greeter {};
-//! tonic::transport::Server::builder()
-//!     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-//!     .serve_with_incoming(incoming)
-//!     .await
-//!     .unwrap();
-//! }
+//! # Examples
+//! Server example:
+//! ```no_run
+//! # use tower::Service;
+//! # use hyper::{Request, Response};
+//! # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
+//! # use core::convert::Infallible;
+//! # use std::error::Error;
+//! use openssl::ssl::SslAcceptor;
+//! use tonic_tls::openssl::TlsIncoming;
+//! # fn main() { }  // Cannot have type parameters, hence instead define:
+//! # fn run<S>(some_service: S, acceptor: SslAcceptor) -> Result<(), Box<dyn Error + Send + Sync>>
+//! # where
+//! #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
+//! #   S::Future: Send + 'static,
+//! # {
+//! let addr = "127.0.0.1:1322".parse().unwrap();
+//! let inc = TlsIncoming::new(TcpIncoming::bind(addr).unwrap(), acceptor);
+//! Server::builder()
+//!    .add_service(some_service)
+//!    .serve_with_incoming(inc);
+//! # Ok(())
+//! # }
 //! ```
-//!
 //! Client example:
 //! ```
 //! async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
@@ -46,6 +55,8 @@ use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 mod client;
 pub use client::{connector_inner, new_endpoint, TlsConnector};
+mod server;
+use server::TlsIncoming;
 
 #[cfg(feature = "native")]
 pub mod native;

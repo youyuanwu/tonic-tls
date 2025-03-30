@@ -11,6 +11,8 @@ use tonic::transport::server::Connected;
 
 mod client;
 pub use client::connector;
+mod server;
+pub use server::TlsIncoming;
 
 /// Internal implementation of acceptor wrapper.
 #[derive(Clone)]
@@ -39,18 +41,27 @@ where
 /// Wraps the incoming (tcp) stream into a rustls stream, which
 /// can be used to run tonic server.
 /// Example:
-/// ```ignore
-/// async fn run_openssl_tonic_server(
-///     tcp_s: tonic::transport::server::TcpIncoming,
-///     server_config: std::sync::Arc<tokio_rustls::rustls::ServerConfig>,
-/// ) {
-///     let incoming = tonic_tls::rustls::incoming(tcp_s, server_config);
-///     let greeter = Greeter {};
-///     tonic::transport::Server::builder()
-///         .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-///         .serve_with_incoming(incoming)
-///         .await
-///         .unwrap();
+/// ```no_run
+/// # use tower::Service;
+/// # use hyper::{Request, Response};
+/// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
+/// # use core::convert::Infallible;
+/// # use std::sync::Arc;
+/// # use std::error::Error;
+/// use tokio_rustls::rustls::ServerConfig;
+/// use tonic_tls::rustls::TlsIncoming;
+/// # fn main() { }  // Cannot have type parameters, hence instead define:
+/// # fn run<S>(some_service: S, server_config: Arc<tokio_rustls::rustls::ServerConfig>) -> Result<(), Box<dyn Error + Send + Sync>>
+/// # where
+/// #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
+/// #   S::Future: Send + 'static,
+/// # {
+/// let addr = "127.0.0.1:1322".parse().unwrap();
+/// let incoming = tonic_tls::rustls::incoming(TcpIncoming::bind(addr).unwrap(), server_config);
+/// tonic::transport::Server::builder()
+///     .add_service(some_service)
+///     .serve_with_incoming(incoming);
+/// # Ok(())
 /// }
 /// ```
 pub fn incoming<IO, IE>(
