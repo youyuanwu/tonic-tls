@@ -10,6 +10,8 @@ use tokio_native_tls::{TlsAcceptor, TlsStream};
 
 mod client;
 pub use client::connector;
+mod server;
+pub use server::TlsIncoming;
 
 /// Internal implementation of acceptor wrapper.
 #[derive(Clone)]

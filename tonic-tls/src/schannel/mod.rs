@@ -11,6 +11,8 @@ use tonic::transport::server::Connected;
 
 mod client;
 pub use client::connector;
+mod server;
+pub use server::TlsIncoming;
 
 /// Internal implementation of acceptor wrapper.
 #[derive(Clone)]

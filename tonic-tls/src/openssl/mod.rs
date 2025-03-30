@@ -11,6 +11,8 @@ use tonic::transport::server::Connected;
 
 mod client;
 pub use client::connector;
+mod server;
+pub use server::TlsIncoming;
 
 /// A const that contains the on the wire `h2` alpn
 /// value that can be passed directly to OpenSSL.
@@ -159,41 +161,5 @@ impl<T> SslConnectInfo<T> {
     /// Return the set of connected peer SSL certificates.
     pub fn peer_certs(&self) -> Option<Arc<Vec<X509>>> {
         self.certs.clone()
-    }
-}
-
-/// The same as the [incoming] returned stream,
-/// but wrapped in a struct.
-pub struct TlsIncoming<IO> {
-    inner: crate::TlsIncoming<SslStream<IO>>,
-}
-
-impl<IO> TlsIncoming<IO>
-where
-    IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-{
-    /// The same arguments as [incoming] function.
-    pub fn new<IE>(
-        inner_incoming: impl Stream<Item = Result<IO, IE>> + 'static + Send,
-        acceptor: SslAcceptor,
-    ) -> Self
-    where
-        IE: Into<crate::Error> + 'static,
-    {
-        let inner = incoming(inner_incoming, acceptor);
-        Self {
-            inner: crate::TlsIncoming::new(inner),
-        }
-    }
-}
-
-impl<IO> Stream for TlsIncoming<IO> {
-    type Item = Result<SslStream<IO>, crate::Error>;
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use futures::StreamExt;
-        self.inner.poll_next_unpin(cx)
     }
 }

@@ -39,10 +39,14 @@ mod tests {
 
         use crate::helloworld::{self, HelloReply, HelloRequest};
         use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-        use tokio_stream::wrappers::TcpListenerStream;
+        
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::server::TcpConnectInfo, transport::Channel, Request, Response, Status,
+            transport::{
+                server::{TcpConnectInfo, TcpIncoming},
+                Channel,
+            },
+            Request, Response, Status,
         };
         pub struct RustlsGreeter {}
 
@@ -128,10 +132,10 @@ mod tests {
         // Run the tonic server on the current thread until token is cancelled.
         async fn run_rustls_tonic_server(
             token: CancellationToken,
-            tcp_s: TcpListenerStream,
+            tcp_s: TcpIncoming,
             tls_acceptor: Arc<tokio_rustls::rustls::ServerConfig>,
         ) {
-            let incoming = tonic_tls::rustls::incoming(tcp_s, tls_acceptor);
+            let incoming = tonic_tls::rustls::TlsIncoming::new(tcp_s, tls_acceptor);
 
             let greeter = RustlsGreeter {};
             tonic::transport::Server::builder()
@@ -163,8 +167,7 @@ mod tests {
             let acceptor = create_rustls_acceptor(&cert, &key);
             // start server in background
             let sv_h = tokio::spawn(async move {
-                run_rustls_tonic_server(sv_token_cp, TcpListenerStream::new(listener), acceptor)
-                    .await
+                run_rustls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
             });
 
             println!("running server on {addr}");
@@ -213,10 +216,13 @@ mod tests {
 
         use crate::helloworld::{self, HelloReply, HelloRequest};
         use tokio_native_tls::native_tls;
-        use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::server::TcpConnectInfo, transport::Channel, Request, Response, Status,
+            transport::{
+                server::{TcpConnectInfo, TcpIncoming},
+                Channel,
+            },
+            Request, Response, Status,
         };
         pub struct NtlsGreeter {}
 
@@ -286,10 +292,10 @@ mod tests {
 
         async fn run_ntls_tonic_server(
             token: CancellationToken,
-            tcp_s: TcpListenerStream,
+            tcp_s: TcpIncoming,
             tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
         ) {
-            let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);
+            let incoming = tonic_tls::native::TlsIncoming::new(tcp_s, tls_acceptor);
 
             let greeter = NtlsGreeter {};
             tonic::transport::Server::builder()
@@ -319,7 +325,7 @@ mod tests {
             let acceptor = create_ntls_acceptor(&key);
             // start server in background
             let sv_h = tokio::spawn(async move {
-                run_ntls_tonic_server(sv_token_cp, TcpListenerStream::new(listener), acceptor).await
+                run_ntls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
             });
 
             println!("running server on {addr}");
@@ -360,10 +366,13 @@ mod tests {
     mod openssl_test {
         use super::*;
         use crate::helloworld::{self, HelloReply, HelloRequest};
-        use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::server::TcpConnectInfo, transport::Channel, Request, Response, Status,
+            transport::{
+                server::{TcpConnectInfo, TcpIncoming},
+                Channel,
+            },
+            Request, Response, Status,
         };
 
         pub struct OpensslGreeter {}
@@ -444,11 +453,10 @@ mod tests {
 
         async fn run_openssl_tonic_server(
             token: CancellationToken,
-            tcp_s: TcpListenerStream,
+            tcp_s: TcpIncoming,
             tls_acceptor: openssl::ssl::SslAcceptor,
         ) {
             let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_s, tls_acceptor);
-
             let greeter = OpensslGreeter {};
             tonic::transport::Server::builder()
                 .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
@@ -477,8 +485,7 @@ mod tests {
             let acceptor = create_openssl_acceptor(&cert, &key);
             // start server in background
             let sv_h = tokio::spawn(async move {
-                run_openssl_tonic_server(sv_token_cp, TcpListenerStream::new(listener), acceptor)
-                    .await
+                run_openssl_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
             });
 
             println!("running server on {addr}");
@@ -524,10 +531,9 @@ mod tests {
 
         use crate::helloworld::{self, HelloReply, HelloRequest};
 
-        use tokio_stream::wrappers::TcpListenerStream;
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::server::TcpConnectInfo, transport::Channel, Request, Response, Status,
+            transport::{server::{TcpConnectInfo, TcpIncoming}, Channel}, Request, Response, Status,
         };
 
         pub struct SchannelGreeter {}
@@ -673,11 +679,11 @@ mod tests {
 
         async fn run_schannel_tonic_server(
             token: CancellationToken,
-            tcp_s: TcpListenerStream,
+            tcp_s: TcpIncoming,
             tls_acceptor: schannel::tls_stream::Builder,
             creds: schannel::schannel_cred::SchannelCred,
         ) {
-            let incoming = tonic_tls::schannel::incoming(tcp_s, tls_acceptor, creds);
+            let incoming = tonic_tls::schannel::TlsIncoming::new(tcp_s, tls_acceptor, creds);
 
             let greeter = SchannelGreeter {};
             tonic::transport::Server::builder()
@@ -714,7 +720,7 @@ mod tests {
             let sv_h = tokio::spawn(async move {
                 run_schannel_tonic_server(
                     sv_token_cp,
-                    TcpListenerStream::new(listener),
+                    TcpIncoming::from(listener),
                     acceptor,
                     creds,
                 )
