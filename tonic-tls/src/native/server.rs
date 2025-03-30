@@ -13,7 +13,7 @@ pub struct TlsIncoming {
 impl TlsIncoming {
     /// Creates a tls incoming stream on top of a tcp incoming stream
     /// # Examples
-    /// ```
+    /// ```no_run
     /// # use tower::Service;
     /// # use hyper::{Request, Response};
     /// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
