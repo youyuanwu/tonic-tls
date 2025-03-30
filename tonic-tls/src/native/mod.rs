@@ -40,18 +40,26 @@ where
 /// Wraps the incoming (tcp) stream into a native tls stream, which
 /// can be used to run tonic server.
 /// Example:
-/// ```ignore
-/// async fn run_tonic_server(
-///  tcp_s: tonic::transport::server::TcpIncoming,
-///  tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
-/// ) {
-/// let incoming = tonic_tls::native::incoming(tcp_s, tls_acceptor);
-/// let greeter = Greeter {};
+/// ```no_run
+/// # use tower::Service;
+/// # use hyper::{Request, Response};
+/// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
+/// # use core::convert::Infallible;
+/// # use std::error::Error;
+/// use tokio_native_tls::native_tls::TlsAcceptor;
+/// use tonic_tls::native::TlsIncoming;
+/// # fn main() { }  // Cannot have type parameters, hence instead define:
+/// # fn run<S>(some_service: S, acceptor: TlsAcceptor) -> Result<(), Box<dyn Error + Send + Sync>>
+/// # where
+/// #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
+/// #   S::Future: Send + 'static,
+/// # {
+/// let addr = "127.0.0.1:1322".parse().unwrap();
+/// let incoming = tonic_tls::native::incoming(TcpIncoming::bind(addr).unwrap(), acceptor);
 /// tonic::transport::Server::builder()
-///     .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-///     .serve_with_incoming(incoming)
-///     .await
-///     .unwrap();
+///     .add_service(some_service)
+///     .serve_with_incoming(incoming);
+/// # Ok(())
 /// }
 /// ```
 pub fn incoming<IO, IE>(

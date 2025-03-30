@@ -39,7 +39,7 @@ mod tests {
 
         use crate::helloworld::{self, HelloReply, HelloRequest};
         use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-        
+
         use tokio_util::sync::CancellationToken;
         use tonic::{
             transport::{
@@ -533,7 +533,11 @@ mod tests {
 
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::{server::{TcpConnectInfo, TcpIncoming}, Channel}, Request, Response, Status,
+            transport::{
+                server::{TcpConnectInfo, TcpIncoming},
+                Channel,
+            },
+            Request, Response, Status,
         };
 
         pub struct SchannelGreeter {}
@@ -718,13 +722,8 @@ mod tests {
             let acceptor = create_schannel_acceptor();
             // start server in background
             let sv_h = tokio::spawn(async move {
-                run_schannel_tonic_server(
-                    sv_token_cp,
-                    TcpIncoming::from(listener),
-                    acceptor,
-                    creds,
-                )
-                .await
+                run_schannel_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor, creds)
+                    .await
             });
 
             println!("running server on {addr}");
