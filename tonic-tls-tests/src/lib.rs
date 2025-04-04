@@ -90,7 +90,7 @@ mod tests {
             let dnsname = ServerName::try_from("localhost").unwrap();
 
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::rustls::connector(
+                .connect_with_connector(tonic_tls::rustls::TlsConnector::new(
                     url,
                     Arc::new(config),
                     dnsname,
@@ -285,7 +285,7 @@ mod tests {
             let url = format!("https://{}", addr).parse().unwrap();
             let dnsname = "localhost".to_string();
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::native::connector(url, tc, dnsname))
+                .connect_with_connector(tonic_tls::native::TlsConnector::new(url, tc, dnsname))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -421,7 +421,9 @@ mod tests {
                 .unwrap();
             let dnsname = "localhost".to_string();
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::openssl::connector(url, connector, dnsname))
+                .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+                    url, connector, dnsname,
+                ))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -658,7 +660,7 @@ mod tests {
                 .acquire(schannel::schannel_cred::Direction::Outbound)
                 .unwrap();
             tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::schannel::connector(url, builder, creds))
+                .connect_with_connector(tonic_tls::schannel::TlsConnector::new(url, builder, creds))
                 .await
                 .map_err(tonic_tls::Error::from)
         }

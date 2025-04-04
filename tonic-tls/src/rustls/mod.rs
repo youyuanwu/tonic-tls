@@ -10,7 +10,7 @@ use tokio_rustls::rustls::pki_types::CertificateDer;
 use tonic::transport::server::Connected;
 
 mod client;
-pub use client::connector;
+pub use client::TlsConnector;
 mod server;
 pub use server::TlsIncoming;
 

@@ -38,7 +38,7 @@ pub fn connector_inner<C, TS>(
     arg: C::Arg,
 ) -> impl Service<
     Uri,
-    Response = impl hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
+    Response = hyper_util::rt::TokioIo<TS>,
     Future = impl Send + 'static,
     Error = crate::Error,
 >
@@ -92,4 +92,25 @@ async fn connect_tcp(addrs: Vec<SocketAddr>) -> std::io::Result<TcpStream> {
         }
     }
     Err(conn_err)
+}
+
+/// Pass through wrapper for converting a tower service connector impl into a struct.
+pub(crate) struct ConnectorWrapper<T> {
+    pub inner: tower::util::BoxService<Uri, hyper_util::rt::TokioIo<T>, crate::Error>,
+}
+
+impl<T> ConnectorWrapper<T> {
+    pub fn new(
+        inner: impl Service<
+                Uri,
+                Response = hyper_util::rt::TokioIo<T>,
+                Future = impl Send + 'static,
+                Error = crate::Error,
+            > + Send
+            + 'static,
+    ) -> Self {
+        Self {
+            inner: tower::util::BoxService::new(inner),
+        }
+    }
 }

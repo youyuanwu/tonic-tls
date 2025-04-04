@@ -28,13 +28,13 @@ async fn run_openssl_tonic_server(
     tcp_s: tonic::transport::server::TcpIncoming,
     tls_acceptor: openssl::ssl::SslAcceptor,
 ) {
-let incoming = tonic_tls::openssl::incoming(tcp_s, tls_acceptor);
-let greeter = Greeter {};
-tonic::transport::Server::builder()
-    .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-    .serve_with_incoming(incoming)
-    .await
-    .unwrap();
+    let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_s, tls_acceptor);
+    let greeter = OpensslGreeter {};
+    tonic::transport::Server::builder()
+        .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
+        .serve_with_incoming(incoming)
+        .await
+        .unwrap();
 }
 ```
 
@@ -42,7 +42,7 @@ tonic::transport::Server::builder()
 // client example for openssl:
 async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector) {
     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
-        .connect_with_connector(tonic_tls::openssl::connector(
+        .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
             "https://localhost:12345".parse().unwrap(),
             ssl_conn,
             "localhost".to_string(),
