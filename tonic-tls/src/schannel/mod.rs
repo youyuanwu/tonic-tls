@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tonic::transport::server::Connected;
 
 mod client;
-pub use client::connector;
+pub use client::TlsConnector;
 mod server;
 pub use server::TlsIncoming;
 

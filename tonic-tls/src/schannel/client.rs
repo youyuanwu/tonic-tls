@@ -4,6 +4,8 @@ use tokio::net::TcpStream;
 use tonic::transport::Uri;
 use tower::Service;
 
+pub type TlsStream = tokio_schannel::TlsStream<TcpStream>;
+
 /// Internal implementation of connector wrapper.
 #[derive(Clone)]
 struct SchannelConnector {
@@ -11,7 +13,7 @@ struct SchannelConnector {
 }
 
 impl crate::TlsConnector<TcpStream> for SchannelConnector {
-    type TlsStream = tokio_schannel::TlsStream<TcpStream>;
+    type TlsStream = TlsStream;
     type Arg = schannel::schannel_cred::SchannelCred;
 
     async fn connect(
@@ -29,30 +31,13 @@ impl crate::TlsConnector<TcpStream> for SchannelConnector {
     }
 }
 
-/// tonic client connector to connect to https endpoint at addr using
-/// schannel.
-/// See [connect](schannel::tls_stream::Builder::connect) for details.
-/// # Examples
-/// ```
-/// async fn connect_tonic_channel(builder: schannel::tls_stream::Builder,
-///         cred: schannel::schannel_cred::SchannelCred)
-/// -> tonic::transport::Channel {
-///     tonic_tls::new_endpoint()
-///         .connect_with_connector(tonic_tls::schannel::connector(
-///             "https:://localhost:12345".parse().unwrap(),
-///             builder,
-///             cred,
-///         ))
-///         .await.unwrap()
-/// }
-/// ```
-pub fn connector(
+fn connector(
     uri: Uri,
     builder: schannel::tls_stream::Builder,
     cred: schannel::schannel_cred::SchannelCred,
 ) -> impl Service<
     Uri,
-    Response = impl hyper::rt::Read + hyper::rt::Write + Send + Unpin + 'static,
+    Response = hyper_util::rt::TokioIo<TlsStream>,
     Future = impl Send + 'static,
     Error = crate::Error,
 > {
@@ -62,4 +47,56 @@ pub fn connector(
         ))),
     };
     crate::connector_inner(uri, ssl_conn, cred)
+}
+
+/// tonic client connector to connect to https endpoint at addr using
+/// schannel.
+pub struct TlsConnector {
+    inner: crate::client::ConnectorWrapper<TlsStream>,
+}
+
+impl TlsConnector {
+    /// See [connect](schannel::tls_stream::Builder::connect) for details.
+    /// # Examples
+    /// ```
+    /// async fn connect_tonic_channel(builder: schannel::tls_stream::Builder,
+    ///         cred: schannel::schannel_cred::SchannelCred)
+    /// -> tonic::transport::Channel {
+    ///     tonic_tls::new_endpoint()
+    ///         .connect_with_connector(tonic_tls::schannel::TlsConnector::new(
+    ///             "https:://localhost:12345".parse().unwrap(),
+    ///             builder,
+    ///             cred,
+    ///         ))
+    ///         .await.unwrap()
+    /// }
+    /// ```
+    pub fn new(
+        uri: Uri,
+        builder: schannel::tls_stream::Builder,
+        cred: schannel::schannel_cred::SchannelCred,
+    ) -> Self {
+        Self {
+            inner: crate::client::ConnectorWrapper::new(connector(uri, builder, cred)),
+        }
+    }
+}
+
+impl Service<Uri> for TlsConnector {
+    type Response = hyper_util::rt::TokioIo<TlsStream>;
+
+    type Error = crate::Error;
+
+    type Future = futures::future::BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Uri) -> Self::Future {
+        self.inner.inner.call(req)
+    }
 }

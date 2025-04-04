@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_native_tls::{TlsAcceptor, TlsStream};
 
 mod client;
-pub use client::connector;
+pub use client::TlsConnector;
 mod server;
 pub use server::TlsIncoming;
 
