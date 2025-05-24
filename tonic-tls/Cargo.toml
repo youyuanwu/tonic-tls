@@ -16,6 +16,7 @@ tokio.workspace = true
 async-stream.workspace = true
 tracing.workspace = true
 futures.workspace = true
+socket2.workspace = true
 
 tower.workspace = true
 tonic.workspace = true

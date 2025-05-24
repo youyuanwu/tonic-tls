@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -8,14 +8,10 @@ use tokio::{
 use tonic::transport::Uri;
 use tower::Service;
 
-/// Creates an endpoint with and local uri that is never used.
-/// Use connector like [connector](super::openssl::connector) to make connections.
-pub fn new_endpoint() -> tonic::transport::Endpoint {
-    tonic::transport::Endpoint::from_static("http://[::]:50051")
-}
+use crate::endpoint::TcpOpt;
 
 /// Not intended to be used by applications directly.
-/// To add a new tls backend, implment this and pass it into [connector_inner].
+/// To add a new tls backend, implement this and pass it into [connector_inner].
 pub trait TlsConnector<S>: Clone + Send + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
@@ -33,7 +29,7 @@ where
 /// Not intended to be used by applications directly.
 /// Applications should use the tls backend api, for example [super::openssl::connector]
 pub fn connector_inner<C, TS>(
-    uri: Uri,
+    endpoint: &tonic::transport::Endpoint,
     ssl_conn: C,
     arg: C::Arg,
 ) -> impl Service<
@@ -46,14 +42,19 @@ where
     C: TlsConnector<TcpStream, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
+    let tcp_opt = Arc::new(TcpOpt::from_ep(endpoint));
     tower::service_fn(move |_: Uri| {
-        let uri = uri.clone();
+        let tcp_opt = tcp_opt.clone();
         let ssl_conn = ssl_conn.clone();
         let arg = arg.clone();
         async move {
-            let addrs = dns_resolve(&uri).await?;
+            let addrs = dns_resolve(&tcp_opt.uri).await?;
             // Connect and get ssl stream
             let stream = connect_tcp(addrs).await?;
+
+            // Apply tcp options to stream.
+            tcp_opt.apply_opt(&stream)?;
+
             let ssl_s = ssl_conn.connect(arg, stream).await?;
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }
