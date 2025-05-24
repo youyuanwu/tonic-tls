@@ -27,7 +27,7 @@ impl crate::TlsConnector<TcpStream> for OpensslConnector {
 }
 
 fn connector(
-    uri: Uri,
+    endpoint: &tonic::transport::Endpoint,
     ssl_conn: openssl::ssl::SslConnector,
     domain: String,
 ) -> impl Service<
@@ -37,7 +37,7 @@ fn connector(
     Error = crate::Error,
 > {
     let ssl_conn = OpensslConnector(ssl_conn);
-    crate::connector_inner(uri, ssl_conn, domain)
+    crate::connector_inner(endpoint, ssl_conn, domain)
 }
 
 /// tonic client connector to connect to https endpoint at addr using
@@ -51,19 +51,24 @@ impl TlsConnector {
     /// See [connect](openssl::ssl::SslConnector::connect) for details.
     /// # Examples
     /// ```
-    /// async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
-    ///     let ch: tonic::transport::Channel = tonic_tls::new_endpoint()
-    ///         .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-    ///             "https:://localhost:12345".parse().unwrap(),
-    ///             ssl_conn,
-    ///            "localhost".to_string(),
-    ///         ))
-    ///         .await.unwrap();
+    /// async fn connect_tonic_channel(
+    ///     endpoint: tonic::transport::Endpoint,
+    ///     ssl_conn: openssl::ssl::SslConnector
+    /// ) -> tonic::transport::Channel {
+    ///     endpoint.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+    ///         &endpoint,
+    ///         ssl_conn,
+    ///        "localhost".to_string(),
+    ///     )).await.unwrap()
     /// }
     /// ```
-    pub fn new(uri: Uri, ssl_conn: openssl::ssl::SslConnector, domain: String) -> Self {
+    pub fn new(
+        endpoint: &tonic::transport::Endpoint,
+        ssl_conn: openssl::ssl::SslConnector,
+        domain: String,
+    ) -> Self {
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(uri, ssl_conn, domain)),
+            inner: crate::client::ConnectorWrapper::new(connector(endpoint, ssl_conn, domain)),
         }
     }
 }

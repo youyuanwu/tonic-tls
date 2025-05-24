@@ -19,14 +19,14 @@ async fn main() -> Result<(), tonic_tls::Error> {
 async fn connect_tonic_channel(
     ssl_conn: openssl::ssl::SslConnector,
 ) -> Result<tonic::transport::Channel, tonic_tls::Error> {
-    tonic_tls::new_endpoint()
-        .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-            "https://localhost:50051".parse().unwrap(),
-            ssl_conn,
-            "localhost".to_string(), // server has cert with dns localhost
-        ))
-        .await
-        .map_err(tonic_tls::Error::from)
+    let ep = tonic::transport::Endpoint::from_static("https://localhost:50051");
+    ep.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+        &ep,
+        ssl_conn,
+        "localhost".to_string(), // server has cert with dns localhost
+    ))
+    .await
+    .map_err(tonic_tls::Error::from)
 }
 
 fn make_ssl_conn() -> openssl::ssl::SslConnector {

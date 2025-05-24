@@ -16,6 +16,7 @@ tower = "0.5"
 hyper = "1"
 hyper-util = "0.1"
 tracing = "0.1"
+socket2 = "0.5"
 
 # native tls
 tokio-native-tls = "0.3"

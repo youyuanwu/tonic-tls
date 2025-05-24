@@ -32,7 +32,7 @@ impl crate::TlsConnector<TcpStream> for SchannelConnector {
 }
 
 fn connector(
-    uri: Uri,
+    endpoint: &tonic::transport::Endpoint,
     builder: schannel::tls_stream::Builder,
     cred: schannel::schannel_cred::SchannelCred,
 ) -> impl Service<
@@ -46,7 +46,7 @@ fn connector(
             builder,
         ))),
     };
-    crate::connector_inner(uri, ssl_conn, cred)
+    crate::connector_inner(endpoint, ssl_conn, cred)
 }
 
 /// tonic client connector to connect to https endpoint at addr using
@@ -59,25 +59,25 @@ impl TlsConnector {
     /// See [connect](schannel::tls_stream::Builder::connect) for details.
     /// # Examples
     /// ```
-    /// async fn connect_tonic_channel(builder: schannel::tls_stream::Builder,
-    ///         cred: schannel::schannel_cred::SchannelCred)
+    /// async fn connect_tonic_channel(
+    ///     endpoint: tonic::transport::Endpoint,
+    ///     builder: schannel::tls_stream::Builder,
+    ///     cred: schannel::schannel_cred::SchannelCred)
     /// -> tonic::transport::Channel {
-    ///     tonic_tls::new_endpoint()
-    ///         .connect_with_connector(tonic_tls::schannel::TlsConnector::new(
-    ///             "https:://localhost:12345".parse().unwrap(),
-    ///             builder,
-    ///             cred,
-    ///         ))
-    ///         .await.unwrap()
+    ///     endpoint.connect_with_connector(tonic_tls::schannel::TlsConnector::new(
+    ///         &endpoint,
+    ///         builder,
+    ///         cred,
+    ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        uri: Uri,
+        endpoint: &tonic::transport::Endpoint,
         builder: schannel::tls_stream::Builder,
         cred: schannel::schannel_cred::SchannelCred,
     ) -> Self {
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(uri, builder, cred)),
+            inner: crate::client::ConnectorWrapper::new(connector(endpoint, builder, cred)),
         }
     }
 }

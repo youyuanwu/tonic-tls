@@ -27,7 +27,7 @@ impl crate::TlsConnector<TcpStream> for RustlsConnector {
 }
 
 fn connector(
-    uri: Uri,
+    endpoint: &tonic::transport::Endpoint,
     ssl_conn: Arc<tokio_rustls::rustls::ClientConfig>,
     domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
 ) -> impl Service<
@@ -37,7 +37,7 @@ fn connector(
     Error = crate::Error,
 > {
     let ssl_conn = RustlsConnector(tokio_rustls::TlsConnector::from(ssl_conn));
-    crate::connector_inner(uri, ssl_conn, domain)
+    crate::connector_inner(endpoint, ssl_conn, domain)
 }
 
 /// tonic client connector to connect to https endpoint at addr using
@@ -52,24 +52,25 @@ impl TlsConnector {
     /// See [connect](tokio_rustls::TlsConnector::connect) for details.
     /// # Examples
     /// ```
-    /// async fn connect_tonic_channel(ssl_conn: std::sync::Arc<tokio_rustls::rustls::ClientConfig>) -> tonic::transport::Channel {
+    /// async fn connect_tonic_channel(
+    ///     endpoint: tonic::transport::Endpoint,
+    ///     ssl_conn: std::sync::Arc<tokio_rustls::rustls::ClientConfig>)
+    /// -> tonic::transport::Channel {    
     ///     let dnsname = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
-    ///     tonic_tls::new_endpoint()
-    ///         .connect_with_connector(tonic_tls::rustls::TlsConnector::new(
-    ///             "https:://localhost:12345".parse().unwrap(),
-    ///             ssl_conn,
-    ///             dnsname,
-    ///         ))
-    ///         .await.unwrap()
+    ///     endpoint.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
+    ///         &endpoint,
+    ///         ssl_conn,
+    ///         dnsname,
+    ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        uri: Uri,
+        endpoint: &tonic::transport::Endpoint,
         ssl_conn: Arc<tokio_rustls::rustls::ClientConfig>,
         domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
     ) -> Self {
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(uri, ssl_conn, domain)),
+            inner: crate::client::ConnectorWrapper::new(connector(endpoint, ssl_conn, domain)),
         }
     }
 }

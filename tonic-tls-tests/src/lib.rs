@@ -79,7 +79,7 @@ mod tests {
         ) -> Result<Channel, tonic_tls::Error> {
             use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 
-            let url = format!("https://{}", addr).parse().unwrap();
+            let url = format!("https://{}", addr);
             let mut root_cert_store = RootCertStore::empty();
             root_cert_store.add(cert.clone()).unwrap();
             let mut config = ClientConfig::builder()
@@ -89,14 +89,14 @@ mod tests {
 
             let dnsname = ServerName::try_from("localhost").unwrap();
 
-            tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::rustls::TlsConnector::new(
-                    url,
-                    Arc::new(config),
-                    dnsname,
-                ))
-                .await
-                .map_err(tonic_tls::Error::from)
+            let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+            ep.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
+                &ep,
+                Arc::new(config),
+                dnsname,
+            ))
+            .await
+            .map_err(tonic_tls::Error::from)
         }
 
         fn make_test_cert_rustls(
@@ -212,7 +212,7 @@ mod tests {
     }
 
     mod ntls_test {
-        use std::net::SocketAddr;
+        use std::{net::SocketAddr, time::Duration};
 
         use crate::helloworld::{self, HelloReply, HelloRequest};
         use tokio_native_tls::native_tls;
@@ -282,10 +282,12 @@ mod tests {
                 .request_alpns(&[std::str::from_utf8(tonic_tls::ALPN_H2).unwrap()])
                 .build()
                 .unwrap();
-            let url = format!("https://{}", addr).parse().unwrap();
+            let url = format!("https://{}", addr);
             let dnsname = "localhost".to_string();
-            tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::native::TlsConnector::new(url, tc, dnsname))
+            let ep = tonic::transport::Endpoint::from_shared(url)
+                .unwrap()
+                .tcp_keepalive(Some(Duration::from_secs(5)));
+            ep.connect_with_connector(tonic_tls::native::TlsConnector::new(&ep, tc, dnsname))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -416,16 +418,14 @@ mod tests {
                 .unwrap();
             let connector = connector.build();
             // use dns to test resolve
-            let url = format!("https://localhost:{}", addr.port())
-                .parse()
-                .unwrap();
+            let url = format!("https://localhost:{}", addr.port());
             let dnsname = "localhost".to_string();
-            tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-                    url, connector, dnsname,
-                ))
-                .await
-                .map_err(tonic_tls::Error::from)
+            let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+            ep.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+                &ep, connector, dnsname,
+            ))
+            .await
+            .map_err(tonic_tls::Error::from)
         }
         pub fn create_openssl_acceptor(
             cert: &openssl::x509::X509,
@@ -655,12 +655,13 @@ mod tests {
             builder.cert_store(cert_store);
             builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
 
-            let url = format!("https://{}", addr).parse().unwrap();
+            let url = format!("https://{}", addr);
             let creds = schannel::schannel_cred::SchannelCred::builder()
                 .acquire(schannel::schannel_cred::Direction::Outbound)
                 .unwrap();
-            tonic_tls::new_endpoint()
-                .connect_with_connector(tonic_tls::schannel::TlsConnector::new(url, builder, creds))
+            let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+
+            ep.connect_with_connector(tonic_tls::schannel::TlsConnector::new(&ep, builder, creds))
                 .await
                 .map_err(tonic_tls::Error::from)
         }

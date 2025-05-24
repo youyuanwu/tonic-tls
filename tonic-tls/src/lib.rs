@@ -34,14 +34,15 @@
 //! ```
 //! Client example:
 //! ```
-//! async fn connect_tonic_channel(ssl_conn: openssl::ssl::SslConnector){
-//!     let ch: tonic::transport::Channel= tonic_tls::new_endpoint()
-//!         .connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-//!             "https:://localhost:12345".parse().unwrap(),
-//!             ssl_conn,
-//!            "localhost".to_string(),
-//!         ))
-//!         .await.unwrap();
+//! async fn connect_tonic_channel(
+//!     endpoint: tonic::transport::Endpoint,
+//!     ssl_conn: openssl::ssl::SslConnector
+//! ) -> tonic::transport::Channel {
+//!     endpoint.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+//!         &endpoint,
+//!         ssl_conn,
+//!        "localhost".to_string(),
+//!     )).await.unwrap()
 //! }
 //! ```
 #![doc(html_root_url = "https://docs.rs/tonic-tls/latest/tonic_tls/")]
@@ -54,9 +55,10 @@ use std::{ops::ControlFlow, pin::pin};
 use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 mod client;
-pub use client::{connector_inner, new_endpoint, TlsConnector};
+pub use client::{connector_inner, TlsConnector};
 mod server;
 use server::TlsIncoming;
+mod endpoint;
 
 #[cfg(feature = "native")]
 pub mod native;
