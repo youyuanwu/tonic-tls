@@ -655,7 +655,7 @@ mod tests {
             builder.cert_store(cert_store);
             builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
 
-            let url = format!("https://{}", addr);
+            let url = format!("https://{addr}");
             let creds = schannel::schannel_cred::SchannelCred::builder()
                 .acquire(schannel::schannel_cred::Direction::Outbound)
                 .unwrap();
@@ -756,7 +756,7 @@ mod tests {
                 name: "Tonic".into(),
             });
             let resp = client.say_hello(request).await.unwrap();
-            println!("RESPONSE={:?}", resp);
+            println!("RESPONSE={resp:?}");
 
             // stop server
             sv_token.cancel();
