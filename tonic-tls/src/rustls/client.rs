@@ -35,7 +35,7 @@ fn connector(
     Response = hyper_util::rt::TokioIo<TlsStream>,
     Future = impl Send + 'static,
     Error = crate::Error,
-> {
+> + 'static {
     let ssl_conn = RustlsConnector(tokio_rustls::TlsConnector::from(ssl_conn));
     crate::connector_inner(endpoint, ssl_conn, domain)
 }

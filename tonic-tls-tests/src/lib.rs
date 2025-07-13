@@ -15,7 +15,7 @@ mod tests {
     }
 
     fn make_test_cert(subject_alt_names: Vec<String>) -> (rcgen::Certificate, rcgen::KeyPair) {
-        use rcgen::{generate_simple_self_signed, CertifiedKey};
+        use rcgen::{CertifiedKey, generate_simple_self_signed};
         let CertifiedKey { cert, key_pair } =
             generate_simple_self_signed(subject_alt_names).unwrap();
         (cert, key_pair)
@@ -42,11 +42,11 @@ mod tests {
 
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::{
-                server::{TcpConnectInfo, TcpIncoming},
-                Channel,
-            },
             Request, Response, Status,
+            transport::{
+                Channel,
+                server::{TcpConnectInfo, TcpIncoming},
+            },
         };
         pub struct RustlsGreeter {}
 
@@ -77,9 +77,9 @@ mod tests {
             cert: &CertificateDer<'static>,
             addr: SocketAddr,
         ) -> Result<Channel, tonic_tls::Error> {
-            use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
+            use tokio_rustls::rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
 
-            let url = format!("https://{}", addr);
+            let url = format!("https://{addr}");
             let mut root_cert_store = RootCertStore::empty();
             root_cert_store.add(cert.clone()).unwrap();
             let mut config = ClientConfig::builder()
@@ -203,7 +203,7 @@ mod tests {
                 name: "Tonic".into(),
             });
             let resp = client.say_hello(request).await.unwrap();
-            println!("RESPONSE={:?}", resp);
+            println!("RESPONSE={resp:?}");
 
             // stop server
             sv_token.cancel();
@@ -218,11 +218,11 @@ mod tests {
         use tokio_native_tls::native_tls;
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::{
-                server::{TcpConnectInfo, TcpIncoming},
-                Channel,
-            },
             Request, Response, Status,
+            transport::{
+                Channel,
+                server::{TcpConnectInfo, TcpIncoming},
+            },
         };
         pub struct NtlsGreeter {}
 
@@ -282,7 +282,7 @@ mod tests {
                 .request_alpns(&[std::str::from_utf8(tonic_tls::ALPN_H2).unwrap()])
                 .build()
                 .unwrap();
-            let url = format!("https://{}", addr);
+            let url = format!("https://{addr}");
             let dnsname = "localhost".to_string();
             let ep = tonic::transport::Endpoint::from_shared(url)
                 .unwrap()
@@ -357,7 +357,7 @@ mod tests {
                 name: "Tonic".into(),
             });
             let resp = client.say_hello(request).await.unwrap();
-            println!("RESPONSE={:?}", resp);
+            println!("RESPONSE={resp:?}");
 
             // stop server
             sv_token.cancel();
@@ -370,11 +370,11 @@ mod tests {
         use crate::helloworld::{self, HelloReply, HelloRequest};
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::{
-                server::{TcpConnectInfo, TcpIncoming},
-                Channel,
-            },
             Request, Response, Status,
+            transport::{
+                Channel,
+                server::{TcpConnectInfo, TcpIncoming},
+            },
         };
 
         pub struct OpensslGreeter {}
@@ -409,7 +409,7 @@ mod tests {
             connector.set_verify_callback(openssl::ssl::SslVerifyMode::PEER, |ok, ctx| {
                 if !ok {
                     let e = ctx.error();
-                    println!("verify failed : {}", e);
+                    println!("verify failed : {e}");
                 }
                 ok
             });
@@ -446,7 +446,7 @@ mod tests {
             acceptor.set_verify_callback(openssl::ssl::SslVerifyMode::PEER, |ok, ctx| {
                 if !ok {
                     let e = ctx.error();
-                    println!("verify failed : {}", e);
+                    println!("verify failed : {e}");
                 }
                 ok
             });
@@ -519,7 +519,7 @@ mod tests {
                 name: "Tonic".into(),
             });
             let resp = client.say_hello(request).await.unwrap();
-            println!("RESPONSE={:?}", resp);
+            println!("RESPONSE={resp:?}");
 
             // stop server
             sv_token.cancel();
@@ -535,11 +535,11 @@ mod tests {
 
         use tokio_util::sync::CancellationToken;
         use tonic::{
-            transport::{
-                server::{TcpConnectInfo, TcpIncoming},
-                Channel,
-            },
             Request, Response, Status,
+            transport::{
+                Channel,
+                server::{TcpConnectInfo, TcpIncoming},
+            },
         };
 
         pub struct SchannelGreeter {}
@@ -655,7 +655,7 @@ mod tests {
             builder.cert_store(cert_store);
             builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
 
-            let url = format!("https://{}", addr);
+            let url = format!("https://{addr}");
             let creds = schannel::schannel_cred::SchannelCred::builder()
                 .acquire(schannel::schannel_cred::Direction::Outbound)
                 .unwrap();
@@ -756,7 +756,7 @@ mod tests {
                 name: "Tonic".into(),
             });
             let resp = client.say_hello(request).await.unwrap();
-            println!("RESPONSE={:?}", resp);
+            println!("RESPONSE={resp:?}");
 
             // stop server
             sv_token.cancel();
@@ -825,7 +825,7 @@ mod tests {
     #[tokio::test]
     async fn example_test() {
         let curr_dir = std::env::current_dir().unwrap();
-        println!("curr_dir: {:?}", curr_dir);
+        println!("curr_dir: {curr_dir:?}");
 
         println!("launching server");
 
@@ -850,11 +850,11 @@ mod tests {
             .output()
             .expect("Couldn't run client");
         assert!(child_client.status.success());
-        println!("client output: {:?}", child_client);
+        println!("client output: {child_client:?}");
 
         child_server.kill().expect("!kill");
         let server_out = child_server.wait_with_output().unwrap();
         // server kill may exit with code 1.
-        println!("server output: {:?}", server_out);
+        println!("server output: {server_out:?}");
     }
 }

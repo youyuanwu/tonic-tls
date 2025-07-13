@@ -40,7 +40,7 @@ fn connector(
     Response = hyper_util::rt::TokioIo<TlsStream>,
     Future = impl Send + 'static,
     Error = crate::Error,
-> {
+> + 'static {
     let ssl_conn = SchannelConnector {
         inner: Arc::new(tokio::sync::Mutex::new(tokio_schannel::TlsConnector::new(
             builder,

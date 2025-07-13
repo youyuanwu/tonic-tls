@@ -12,7 +12,7 @@ async fn main() -> Result<(), tonic_tls::Error> {
         name: "Tonic".into(),
     });
     let resp = client.say_hello(request).await.unwrap();
-    println!("RESPONSE={:?}", resp);
+    println!("RESPONSE={resp:?}");
     Ok(())
 }
 
@@ -36,7 +36,7 @@ fn make_ssl_conn() -> openssl::ssl::SslConnector {
     connector.set_verify_callback(openssl::ssl::SslVerifyMode::PEER, |ok, ctx| {
         if !ok {
             let e = ctx.error();
-            println!("verify failed : {}", e);
+            println!("verify failed : {e}");
         }
         true
     });

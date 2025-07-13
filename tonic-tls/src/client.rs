@@ -37,7 +37,7 @@ pub fn connector_inner<C, TS>(
     Response = hyper_util::rt::TokioIo<TS>,
     Future = impl Send + 'static,
     Error = crate::Error,
->
+> + 'static
 where
     C: TlsConnector<TcpStream, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
@@ -103,12 +103,12 @@ pub(crate) struct ConnectorWrapper<T> {
 impl<T> ConnectorWrapper<T> {
     pub fn new(
         inner: impl Service<
-                Uri,
-                Response = hyper_util::rt::TokioIo<T>,
-                Future = impl Send + 'static,
-                Error = crate::Error,
-            > + Send
-            + 'static,
+            Uri,
+            Response = hyper_util::rt::TokioIo<T>,
+            Future = impl Send + 'static,
+            Error = crate::Error,
+        > + Send
+        + 'static,
     ) -> Self {
         Self {
             inner: tower::util::BoxService::new(inner),
