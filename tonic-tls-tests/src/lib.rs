@@ -15,10 +15,9 @@ mod tests {
     }
 
     fn make_test_cert(subject_alt_names: Vec<String>) -> (rcgen::Certificate, rcgen::KeyPair) {
-        use rcgen::{CertifiedKey, generate_simple_self_signed};
-        let CertifiedKey { cert, key_pair } =
-            generate_simple_self_signed(subject_alt_names).unwrap();
-        (cert, key_pair)
+        use rcgen::generate_simple_self_signed;
+        let key_pair = generate_simple_self_signed(subject_alt_names).unwrap();
+        (key_pair.cert, key_pair.signing_key)
     }
 
     /// ring does not support RSA so rcgen does not support it. Windows does not support elliplica curve?
@@ -762,63 +761,6 @@ mod tests {
             sv_token.cancel();
             sv_h.await.unwrap();
         }
-
-        // TODO: move to tokio-schannel crate.
-        // #[tokio::test]
-        // async fn test_schannel() {
-        //     let (_, key) = make_test_cert_schannel(vec![
-        //         "hello.world.example".to_string(),
-        //         "localhost".to_string(),
-        //     ]);
-        //     // open listener
-        //     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        //     let addr = listener.local_addr().unwrap();
-
-        //     // run server
-        //     let server_h = tokio::spawn(async move {
-        //         let creds = schannel::schannel_cred::SchannelCred::builder()
-        //             .cert(key)
-        //             .acquire(schannel::schannel_cred::Direction::Inbound)
-        //             .unwrap();
-        //         let builder = schannel::tls_stream::Builder::new();
-        //         let mut acceptor = tokio_schannel::TlsAcceptor::new(builder);
-        //         let (tcp_stream, _) = listener.accept().await.unwrap();
-        //         let mut tls_stream = acceptor.accept(creds, tcp_stream).await.unwrap();
-        //         let mut buf = [0_u8; 1024];
-        //         let len = tokio::io::AsyncReadExt::read(&mut tls_stream, &mut buf)
-        //             .await
-        //             .unwrap();
-        //         assert_eq!(len, 3);
-        //         assert_eq!(buf[..3], [1, 2, 3]);
-        //     });
-
-        //     // sleep wait for server
-        //     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        //     // run client
-        //     let client_h = tokio::spawn(async move {
-        //         let stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
-        //         let creds = schannel::schannel_cred::SchannelCred::builder()
-        //             .acquire(schannel::schannel_cred::Direction::Outbound)
-        //             .unwrap();
-        //         let mut builder = schannel::tls_stream::Builder::new();
-        //         builder.verify_callback(|_| {
-        //             // ignore errors
-        //             Ok(())
-        //         });
-        //         builder.domain("localhost");
-        //         let mut tls_connector = tokio_schannel::TlsConnector::new(builder);
-
-        //         let mut tls_stream = tls_connector.connect(creds, stream).await.unwrap();
-        //         let len = tokio::io::AsyncWriteExt::write(&mut tls_stream, &[1, 2, 3])
-        //             .await
-        //             .unwrap();
-        //         assert_eq!(len, 3);
-        //     });
-
-        //     client_h.await.unwrap();
-        //     server_h.await.unwrap();
-        // }
     }
 
     // run examples
