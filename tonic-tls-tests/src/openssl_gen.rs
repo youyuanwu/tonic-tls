@@ -12,7 +12,7 @@ use openssl::rsa::Rsa;
 use openssl::x509::extension::{
     BasicConstraints, KeyUsage, SubjectAlternativeName, SubjectKeyIdentifier,
 };
-use openssl::x509::{X509NameBuilder, X509};
+use openssl::x509::{X509, X509NameBuilder};
 
 /// Make a self signed certificate and private key using openssl
 pub fn mk_self_signed_cert(

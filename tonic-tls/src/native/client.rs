@@ -32,7 +32,7 @@ fn connector(
     Response = hyper_util::rt::TokioIo<tokio_native_tls::TlsStream<TcpStream>>,
     Future = impl Send + 'static,
     Error = crate::Error,
-> {
+> + 'static {
     let ssl_conn = NativeConnector(tokio_native_tls::TlsConnector::from(ssl_conn));
     crate::connector_inner(endpoint, ssl_conn, domain)
 }

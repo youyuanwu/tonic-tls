@@ -37,7 +37,7 @@ pub fn create_openssl_acceptor(
     acceptor.set_verify_callback(openssl::ssl::SslVerifyMode::NONE, |ok, ctx| {
         if !ok {
             let e = ctx.error();
-            println!("verify failed in server: {}", e);
+            println!("verify failed in server: {e}");
         }
         true
     });
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse().unwrap();
     let greeter = MyGreeter::default();
 
-    println!("GreeterServer listening on {}", addr);
+    println!("GreeterServer listening on {addr}");
     let tcp_incoming = tonic::transport::server::TcpIncoming::bind(addr).unwrap();
     let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_incoming, tls_acceptor);
 

@@ -55,7 +55,7 @@ use std::{ops::ControlFlow, pin::pin};
 use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 mod client;
-pub use client::{connector_inner, TlsConnector};
+pub use client::{TlsConnector, connector_inner};
 mod server;
 use server::TlsIncoming;
 mod endpoint;
