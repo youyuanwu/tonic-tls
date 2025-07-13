@@ -16,7 +16,7 @@ tower = "0.5"
 hyper = "1"
 hyper-util = "0.1"
 tracing = "0.1"
-socket2 = "0.5"
+socket2 = "0.6"
 
 # native tls
 tokio-native-tls = "0.3"
@@ -26,11 +26,11 @@ tokio-openssl = "0.6"
 openssl = "0.10"
 
 # schannel
-tokio-schannel = "0.1"
+tokio-schannel = "0.2"
 schannel = "0.1"
 
 # for dev only
-rcgen = {version = "0.13", default-features = true }
+rcgen = {version = "0.14", default-features = true }
 tokio-util = "0.7"
 tokio-stream = { version = "0.1", features = ["net"] }
 prost = "0.13"
