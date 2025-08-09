@@ -1,3 +1,3 @@
 fn main() {
-    tonic_build::compile_protos("protos/helloworld.proto").unwrap();
+    tonic_prost_build::compile_protos("protos/helloworld.proto").unwrap();
 }
