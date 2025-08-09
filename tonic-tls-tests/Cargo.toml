@@ -17,6 +17,7 @@ path = "examples/client.rs"
 openssl.workspace = true
 tonic.workspace = true
 prost.workspace = true
+tonic-prost.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["signal"]}
@@ -33,7 +34,7 @@ tokio-schannel.workspace = true
 schannel.workspace = true
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true
 
 # For protobuf rs code
 [package.metadata.rust-analyzer]
