@@ -1,4 +1,3 @@
-use futures::Stream;
 use std::{
     fmt::Debug,
     pin::Pin,
@@ -36,44 +35,6 @@ where
             .map(|s| TlsStream { inner: s })
             .map_err(crate::Error::from)
     }
-}
-
-/// Wraps the incoming (tcp) stream into a rustls stream, which
-/// can be used to run tonic server.
-/// Example:
-/// ```no_run
-/// # use tower::Service;
-/// # use hyper::{Request, Response};
-/// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
-/// # use core::convert::Infallible;
-/// # use std::sync::Arc;
-/// # use std::error::Error;
-/// use tokio_rustls::rustls::ServerConfig;
-/// use tonic_tls::rustls::TlsIncoming;
-/// # fn main() { }  // Cannot have type parameters, hence instead define:
-/// # fn run<S>(some_service: S, server_config: Arc<tokio_rustls::rustls::ServerConfig>) -> Result<(), Box<dyn Error + Send + Sync>>
-/// # where
-/// #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
-/// #   S::Future: Send + 'static,
-/// # {
-/// let addr = "127.0.0.1:1322".parse().unwrap();
-/// let incoming = tonic_tls::rustls::incoming(TcpIncoming::bind(addr).unwrap(), server_config);
-/// tonic::transport::Server::builder()
-///     .add_service(some_service)
-///     .serve_with_incoming(incoming);
-/// # Ok(())
-/// }
-/// ```
-pub fn incoming<IO, IE>(
-    incoming: impl Stream<Item = Result<IO, IE>>,
-    server_config: Arc<tokio_rustls::rustls::ServerConfig>,
-) -> impl Stream<Item = Result<TlsStream<IO>, crate::Error>>
-where
-    IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-    IE: Into<crate::Error>,
-{
-    let acceptor = RustlsAcceptor::new(tokio_rustls::TlsAcceptor::from(server_config));
-    crate::incoming_inner::<IO, IE, RustlsAcceptor, TlsStream<IO>>(incoming, acceptor)
 }
 
 /// A `TlsStream` wrapper type that implements tokio's io traits

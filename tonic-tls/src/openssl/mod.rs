@@ -1,4 +1,3 @@
-use futures::Stream;
 use openssl::{ssl::SslAcceptor, x509::X509};
 use std::fmt::Debug;
 use std::{
@@ -39,43 +38,6 @@ where
         Pin::new(&mut tls).accept().await?;
         Ok(SslStream { inner: tls })
     }
-}
-
-/// Wraps the incoming (tcp) stream into a openssl stream, which
-/// can be used to run tonic server.
-/// Example:
-/// ```no_run
-/// # use tower::Service;
-/// # use hyper::{Request, Response};
-/// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
-/// # use core::convert::Infallible;
-/// # use std::error::Error;
-/// use openssl::ssl::SslAcceptor;
-/// use tonic_tls::openssl::TlsIncoming;
-/// # fn main() { }  // Cannot have type parameters, hence instead define:
-/// # fn run<S>(some_service: S, acceptor: SslAcceptor) -> Result<(), Box<dyn Error + Send + Sync>>
-/// # where
-/// #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
-/// #   S::Future: Send + 'static,
-/// # {
-/// let addr = "127.0.0.1:1322".parse().unwrap();
-/// let incoming = tonic_tls::openssl::incoming(TcpIncoming::bind(addr).unwrap(), acceptor);
-/// tonic::transport::Server::builder()
-///     .add_service(some_service)
-///     .serve_with_incoming(incoming);
-/// # Ok(())
-/// }
-/// ```
-pub fn incoming<IO, IE>(
-    incoming: impl Stream<Item = Result<IO, IE>>,
-    acceptor: SslAcceptor,
-) -> impl Stream<Item = Result<SslStream<IO>, crate::Error>>
-where
-    IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-    IE: Into<crate::Error>,
-{
-    let acceptor = OpensslTlsAcceptor::new(acceptor);
-    crate::incoming_inner::<IO, IE, OpensslTlsAcceptor, SslStream<IO>>(incoming, acceptor)
 }
 
 /// A `SslStream` wrapper type that implements tokio's io traits

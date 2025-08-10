@@ -1,4 +1,3 @@
-use futures::Stream;
 use schannel::cert_context::CertContext;
 use std::{
     fmt::Debug,
@@ -48,46 +47,6 @@ where
             .map(|s| TlsStream { inner: s })
             .map_err(crate::Error::from)
     }
-}
-
-/// Wraps the incoming (tcp) stream into a schannel stream, which
-/// can be used to run tonic server.
-/// Example:
-/// ```no_run
-/// # use tower::Service;
-/// # use hyper::{Request, Response};
-/// # use tonic::{body::Body, server::NamedService, transport::{Server, server::TcpIncoming}};
-/// # use core::convert::Infallible;
-/// # use std::error::Error;
-/// use schannel::tls_stream::Builder;
-/// use schannel::schannel_cred::SchannelCred;
-/// use tonic_tls::schannel::TlsIncoming;
-/// # fn main() { }  // Cannot have type parameters, hence instead define:
-/// # fn run<S>(some_service: S, builder: schannel::tls_stream::Builder,
-///     cred: schannel::schannel_cred::SchannelCred,) -> Result<(), Box<dyn Error + Send + Sync>>
-/// # where
-/// #   S: Service<Request<Body>, Response = Response<Body>, Error = Infallible> + NamedService + Clone + Send + Sync + 'static,
-/// #   S::Future: Send + 'static,
-/// # {
-/// let addr = "127.0.0.1:1322".parse().unwrap();
-/// let incoming = tonic_tls::schannel::incoming(TcpIncoming::bind(addr).unwrap(), builder, cred);
-/// tonic::transport::Server::builder()
-///     .add_service(some_service)
-///     .serve_with_incoming(incoming);
-/// # Ok(())
-/// }
-/// ```
-pub fn incoming<IO, IE>(
-    incoming: impl Stream<Item = Result<IO, IE>>,
-    builder: schannel::tls_stream::Builder,
-    cred: schannel::schannel_cred::SchannelCred,
-) -> impl Stream<Item = Result<TlsStream<IO>, crate::Error>>
-where
-    IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-    IE: Into<crate::Error>,
-{
-    let acceptor = SchannelAcceptor::new(tokio_schannel::TlsAcceptor::new(builder), cred);
-    crate::incoming_inner::<IO, IE, SchannelAcceptor, TlsStream<IO>>(incoming, acceptor)
 }
 
 /// A `TlsStream` wrapper type that implements tokio's io traits

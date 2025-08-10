@@ -1,12 +1,12 @@
+use crate::schannel::SchannelAcceptor;
+
 use super::TlsStream;
 use futures::Stream;
-
-use super::incoming;
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
 pub struct TlsIncoming {
-    inner: crate::TlsIncoming<TlsStream<tokio::net::TcpStream>>,
+    inner: crate::server::TlsIncoming<TlsStream<tokio::net::TcpStream>>,
 }
 
 impl TlsIncoming {
@@ -40,9 +40,9 @@ impl TlsIncoming {
         builder: schannel::tls_stream::Builder,
         cred: schannel::schannel_cred::SchannelCred,
     ) -> Self {
-        let inner = incoming(tcp_incoming, builder, cred);
+        let acceptor = SchannelAcceptor::new(tokio_schannel::TlsAcceptor::new(builder), cred);
         Self {
-            inner: crate::TlsIncoming::new(inner),
+            inner: crate::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }

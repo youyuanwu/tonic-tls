@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
+use crate::rustls::RustlsAcceptor;
+
 use super::TlsStream;
 use futures::Stream;
-
-use super::incoming;
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
 pub struct TlsIncoming {
-    inner: crate::TlsIncoming<TlsStream<tokio::net::TcpStream>>,
+    inner: crate::server::TlsIncoming<TlsStream<tokio::net::TcpStream>>,
 }
 
 impl TlsIncoming {
@@ -40,9 +40,9 @@ impl TlsIncoming {
         tcp_incoming: tonic::transport::server::TcpIncoming,
         server_config: Arc<tokio_rustls::rustls::ServerConfig>,
     ) -> Self {
-        let inner = incoming(tcp_incoming, server_config);
+        let acceptor = RustlsAcceptor::new(tokio_rustls::TlsAcceptor::from(server_config));
         Self {
-            inner: crate::TlsIncoming::new(inner),
+            inner: crate::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }
