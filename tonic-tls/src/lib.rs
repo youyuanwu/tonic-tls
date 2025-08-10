@@ -56,9 +56,8 @@ use futures::Stream;
 use tokio::io::{AsyncRead, AsyncWrite};
 mod client;
 pub use client::{TlsConnector, connector_inner};
-mod server;
-use server::TlsIncoming;
 mod endpoint;
+mod server;
 
 #[cfg(feature = "native")]
 pub mod native;
@@ -101,16 +100,16 @@ where
 /// IO is the input io type, IE is the input error type.
 /// A is acceptor, TS is the output tls stream type.
 pub fn incoming_inner<IO, IE, A, TS>(
-    incoming: impl Stream<Item = Result<IO, IE>>,
+    incoming: impl Stream<Item = Result<IO, IE>> + Send + 'static,
     acceptor: A,
-) -> impl Stream<Item = Result<TS, Error>>
+) -> crate::server::TlsIncoming<TS>
 where
     IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
     IE: Into<crate::Error>,
     A: TlsAcceptor<IO, TlsStream = TS>,
     TS: Send + 'static,
 {
-    async_stream::try_stream! {
+    let stream = async_stream::try_stream! {
         let mut incoming = pin!(incoming);
 
         let mut tasks = tokio::task::JoinSet::new();
@@ -144,7 +143,9 @@ where
                 }
             }
         }
-    }
+    };
+    use futures::StreamExt;
+    stream.boxed()
 }
 
 async fn select<IO: 'static, IE, TS: 'static>(

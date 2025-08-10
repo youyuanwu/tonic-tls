@@ -1,13 +1,13 @@
+use crate::native::NativeTlsAcceptor;
+
 use super::TlsStreamWrapper;
 use futures::Stream;
 use tokio_native_tls::native_tls::TlsAcceptor;
 
-use super::incoming;
-
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
 pub struct TlsIncoming {
-    inner: crate::TlsIncoming<TlsStreamWrapper<tokio::net::TcpStream>>,
+    inner: crate::server::TlsIncoming<TlsStreamWrapper<tokio::net::TcpStream>>,
 }
 
 impl TlsIncoming {
@@ -35,9 +35,9 @@ impl TlsIncoming {
     /// # Ok(())
     /// # }
     pub fn new(tcp_incoming: tonic::transport::server::TcpIncoming, acceptor: TlsAcceptor) -> Self {
-        let inner = incoming(tcp_incoming, acceptor);
+        let acceptor = NativeTlsAcceptor::new(tokio_native_tls::TlsAcceptor::from(acceptor));
         Self {
-            inner: crate::TlsIncoming::new(inner),
+            inner: crate::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }
