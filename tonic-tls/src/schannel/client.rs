@@ -31,28 +31,10 @@ impl crate::TlsConnector<TcpStream> for SchannelConnector {
     }
 }
 
-fn connector(
-    endpoint: &tonic::transport::Endpoint,
-    builder: schannel::tls_stream::Builder,
-    cred: schannel::schannel_cred::SchannelCred,
-) -> impl Service<
-    Uri,
-    Response = hyper_util::rt::TokioIo<TlsStream>,
-    Future = impl Send + 'static,
-    Error = crate::Error,
-> + 'static {
-    let ssl_conn = SchannelConnector {
-        inner: Arc::new(tokio::sync::Mutex::new(tokio_schannel::TlsConnector::new(
-            builder,
-        ))),
-    };
-    crate::connector_inner(endpoint, ssl_conn, cred)
-}
-
 /// tonic client connector to connect to https endpoint at addr using
 /// schannel.
 pub struct TlsConnector {
-    inner: crate::client::ConnectorWrapper<TlsStream>,
+    inner: crate::client::TlsBoxedService<TlsStream>,
 }
 
 impl TlsConnector {
@@ -76,8 +58,13 @@ impl TlsConnector {
         builder: schannel::tls_stream::Builder,
         cred: schannel::schannel_cred::SchannelCred,
     ) -> Self {
+        let ssl_conn = SchannelConnector {
+            inner: Arc::new(tokio::sync::Mutex::new(tokio_schannel::TlsConnector::new(
+                builder,
+            ))),
+        };
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(endpoint, builder, cred)),
+            inner: crate::connector_inner(endpoint, ssl_conn, cred),
         }
     }
 }
@@ -93,10 +80,10 @@ impl Service<Uri> for TlsConnector {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.inner.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Uri) -> Self::Future {
-        self.inner.inner.call(req)
+        self.inner.call(req)
     }
 }

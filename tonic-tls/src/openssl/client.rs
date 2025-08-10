@@ -26,24 +26,10 @@ impl crate::TlsConnector<TcpStream> for OpensslConnector {
     }
 }
 
-fn connector(
-    endpoint: &tonic::transport::Endpoint,
-    ssl_conn: openssl::ssl::SslConnector,
-    domain: String,
-) -> impl Service<
-    Uri,
-    Response = hyper_util::rt::TokioIo<tokio_openssl::SslStream<TcpStream>>,
-    Future = impl Send + 'static,
-    Error = crate::Error,
-> + 'static {
-    let ssl_conn = OpensslConnector(ssl_conn);
-    crate::connector_inner(endpoint, ssl_conn, domain)
-}
-
 /// tonic client connector to connect to https endpoint at addr using
 /// openssl settings in ssl.
 pub struct TlsConnector {
-    inner: crate::client::ConnectorWrapper<tokio_openssl::SslStream<TcpStream>>,
+    inner: crate::client::TlsBoxedService<tokio_openssl::SslStream<TcpStream>>,
 }
 
 impl TlsConnector {
@@ -68,7 +54,7 @@ impl TlsConnector {
         domain: String,
     ) -> Self {
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(endpoint, ssl_conn, domain)),
+            inner: crate::connector_inner(endpoint, OpensslConnector(ssl_conn), domain),
         }
     }
 }
@@ -84,10 +70,10 @@ impl Service<Uri> for TlsConnector {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.inner.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Uri) -> Self::Future {
-        self.inner.inner.call(req)
+        self.inner.call(req)
     }
 }
