@@ -1,7 +1,44 @@
-use crate::schannel::SchannelAcceptor;
+use std::sync::Arc;
 
 use super::TlsStream;
 use futures::Stream;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+/// Internal implementation of acceptor wrapper.
+#[derive(Clone)]
+struct SchannelAcceptor {
+    inner: Arc<tokio::sync::Mutex<tokio_schannel::TlsAcceptor>>,
+    cred: schannel::schannel_cred::SchannelCred,
+}
+
+impl SchannelAcceptor {
+    fn new(
+        inner: tokio_schannel::TlsAcceptor,
+        cred: schannel::schannel_cred::SchannelCred,
+    ) -> Self {
+        Self {
+            inner: Arc::new(tokio::sync::Mutex::new(inner)),
+            cred,
+        }
+    }
+}
+
+impl<S> crate::server::TlsAcceptor<S> for SchannelAcceptor
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = TlsStream<S>;
+    async fn accept(&self, stream: S) -> Result<TlsStream<S>, crate::Error> {
+        // lock is needed here because schannel accept call is mutable.
+        self.inner
+            .lock()
+            .await
+            .accept(self.cred.clone(), stream)
+            .await
+            .map(|s| TlsStream::new(s))
+            .map_err(crate::Error::from)
+    }
+}
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
@@ -42,7 +79,7 @@ impl TlsIncoming {
     ) -> Self {
         let acceptor = SchannelAcceptor::new(tokio_schannel::TlsAcceptor::new(builder), cred);
         Self {
-            inner: crate::incoming_inner(tcp_incoming, acceptor),
+            inner: crate::server::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }

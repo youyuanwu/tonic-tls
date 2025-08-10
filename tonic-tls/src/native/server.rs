@@ -1,8 +1,32 @@
-use crate::native::NativeTlsAcceptor;
-
-use super::TlsStreamWrapper;
 use futures::Stream;
-use tokio_native_tls::native_tls::TlsAcceptor;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_native_tls::TlsAcceptor;
+
+use crate::native::TlsStreamWrapper;
+
+/// Internal implementation of acceptor wrapper.
+#[derive(Clone)]
+struct NativeTlsAcceptor(TlsAcceptor);
+
+impl NativeTlsAcceptor {
+    fn new(inner: TlsAcceptor) -> Self {
+        Self(inner)
+    }
+}
+
+impl<S> crate::server::TlsAcceptor<S> for NativeTlsAcceptor
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = TlsStreamWrapper<S>;
+    async fn accept(&self, stream: S) -> Result<TlsStreamWrapper<S>, crate::Error> {
+        self.0
+            .accept(stream)
+            .await
+            .map(|s| TlsStreamWrapper::new(s))
+            .map_err(crate::Error::from)
+    }
+}
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
@@ -34,10 +58,13 @@ impl TlsIncoming {
     ///    .serve_with_incoming(inc);
     /// # Ok(())
     /// # }
-    pub fn new(tcp_incoming: tonic::transport::server::TcpIncoming, acceptor: TlsAcceptor) -> Self {
+    pub fn new(
+        tcp_incoming: tonic::transport::server::TcpIncoming,
+        acceptor: tokio_native_tls::native_tls::TlsAcceptor,
+    ) -> Self {
         let acceptor = NativeTlsAcceptor::new(tokio_native_tls::TlsAcceptor::from(acceptor));
         Self {
-            inner: crate::incoming_inner(tcp_incoming, acceptor),
+            inner: crate::server::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }
