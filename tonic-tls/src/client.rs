@@ -34,7 +34,7 @@ pub fn connector_inner<C, TS>(
     endpoint: &tonic::transport::Endpoint,
     ssl_conn: C,
     arg: C::Arg,
-) -> tower::util::BoxService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>
+) -> TlsBoxedService<TS>
 where
     C: TlsConnector<TcpStream, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
