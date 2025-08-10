@@ -6,7 +6,6 @@ use tokio::{
 };
 
 use tonic::transport::Uri;
-use tower::Service;
 
 use crate::endpoint::TcpOpt;
 
@@ -26,24 +25,22 @@ where
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, crate::Error>> + Send;
 }
 
+pub(crate) type TlsBoxedService<TS> =
+    tower::util::BoxService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
+
 /// Not intended to be used by applications directly.
 /// Applications should use the tls backend api, for example [super::openssl::connector]
 pub fn connector_inner<C, TS>(
     endpoint: &tonic::transport::Endpoint,
     ssl_conn: C,
     arg: C::Arg,
-) -> impl Service<
-    Uri,
-    Response = hyper_util::rt::TokioIo<TS>,
-    Future = impl Send + 'static,
-    Error = crate::Error,
-> + 'static
+) -> TlsBoxedService<TS>
 where
     C: TlsConnector<TcpStream, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
     let tcp_opt = Arc::new(TcpOpt::from_ep(endpoint));
-    tower::service_fn(move |_: Uri| {
+    let svc = tower::service_fn(move |_: Uri| {
         let tcp_opt = tcp_opt.clone();
         let ssl_conn = ssl_conn.clone();
         let arg = arg.clone();
@@ -58,7 +55,8 @@ where
             let ssl_s = ssl_conn.connect(arg, stream).await?;
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }
-    })
+    });
+    tower::util::BoxService::new(svc)
 }
 
 /// Use the host:port portion of the uri and resolve to an sockaddr.
@@ -93,25 +91,4 @@ async fn connect_tcp(addrs: Vec<SocketAddr>) -> std::io::Result<TcpStream> {
         }
     }
     Err(conn_err)
-}
-
-/// Pass through wrapper for converting a tower service connector impl into a struct.
-pub(crate) struct ConnectorWrapper<T> {
-    pub inner: tower::util::BoxService<Uri, hyper_util::rt::TokioIo<T>, crate::Error>,
-}
-
-impl<T> ConnectorWrapper<T> {
-    pub fn new(
-        inner: impl Service<
-            Uri,
-            Response = hyper_util::rt::TokioIo<T>,
-            Future = impl Send + 'static,
-            Error = crate::Error,
-        > + Send
-        + 'static,
-    ) -> Self {
-        Self {
-            inner: tower::util::BoxService::new(inner),
-        }
-    }
 }

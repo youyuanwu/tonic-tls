@@ -26,24 +26,10 @@ impl crate::TlsConnector<TcpStream> for RustlsConnector {
     }
 }
 
-fn connector(
-    endpoint: &tonic::transport::Endpoint,
-    ssl_conn: Arc<tokio_rustls::rustls::ClientConfig>,
-    domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
-) -> impl Service<
-    Uri,
-    Response = hyper_util::rt::TokioIo<TlsStream>,
-    Future = impl Send + 'static,
-    Error = crate::Error,
-> + 'static {
-    let ssl_conn = RustlsConnector(tokio_rustls::TlsConnector::from(ssl_conn));
-    crate::connector_inner(endpoint, ssl_conn, domain)
-}
-
 /// tonic client connector to connect to https endpoint at addr using
 /// rustls.
 pub struct TlsConnector {
-    inner: crate::client::ConnectorWrapper<TlsStream>,
+    inner: crate::client::TlsBoxedService<TlsStream>,
 }
 
 impl TlsConnector {
@@ -70,7 +56,11 @@ impl TlsConnector {
         domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
     ) -> Self {
         Self {
-            inner: crate::client::ConnectorWrapper::new(connector(endpoint, ssl_conn, domain)),
+            inner: crate::connector_inner(
+                endpoint,
+                RustlsConnector(tokio_rustls::TlsConnector::from(ssl_conn)),
+                domain,
+            ),
         }
     }
 }
@@ -86,10 +76,10 @@ impl Service<Uri> for TlsConnector {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.inner.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Uri) -> Self::Future {
-        self.inner.inner.call(req)
+        self.inner.call(req)
     }
 }
