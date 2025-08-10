@@ -1,8 +1,32 @@
-use crate::openssl::OpensslTlsAcceptor;
+use std::pin::Pin;
 
 use super::SslStream;
 use futures::Stream;
 use openssl::ssl::SslAcceptor;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+/// Internal implementation of acceptor wrapper.
+#[derive(Clone)]
+struct OpensslTlsAcceptor(SslAcceptor);
+
+impl OpensslTlsAcceptor {
+    fn new(inner: SslAcceptor) -> Self {
+        Self(inner)
+    }
+}
+
+impl<S> crate::server::TlsAcceptor<S> for OpensslTlsAcceptor
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = SslStream<S>;
+    async fn accept(&self, stream: S) -> Result<SslStream<S>, crate::Error> {
+        let ssl = openssl::ssl::Ssl::new(self.0.context())?;
+        let mut tls = tokio_openssl::SslStream::new(ssl, stream)?;
+        Pin::new(&mut tls).accept().await?;
+        Ok(SslStream::new(tls))
+    }
+}
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
@@ -37,7 +61,7 @@ impl TlsIncoming {
     pub fn new(tcp_incoming: tonic::transport::server::TcpIncoming, acceptor: SslAcceptor) -> Self {
         let acceptor = OpensslTlsAcceptor::new(acceptor);
         Self {
-            inner: crate::incoming_inner(tcp_incoming, acceptor),
+            inner: crate::server::incoming_inner(tcp_incoming, acceptor),
         }
     }
 }
