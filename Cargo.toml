@@ -30,7 +30,7 @@ tokio-schannel = "0.2"
 schannel = "0.1"
 
 # ktls
-openssl-ktls = { version = "0.2", default-features = false, features = ["tokio"] }
+openssl-ktls = { git = "https://github.com/youyuanwu/rust-openssl-ktls.git", rev = "0a4f59e46f1b0dbdf6ce4e29f6ece593d9ac615c", default-features = false, features = ["tokio"] }
 
 # for dev only
 rcgen = {version = "0.14", default-features = true }
