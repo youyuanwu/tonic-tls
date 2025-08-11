@@ -11,6 +11,7 @@
 * [rustls](https://github.com/rustls/rustls)
 * [openssl](https://github.com/sfackler/rust-openssl)
 * [schannel](https://github.com/steffengy/schannel-rs)
+* [openssl-ktls](https://github.com/youyuanwu/rust-openssl-ktls) Experimental
 
 ## Get Started
 Add to Cargo.toml of your project.

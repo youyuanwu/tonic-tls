@@ -33,13 +33,17 @@ tokio-rustls = { workspace = true, optional = true }
 tokio-openssl = { workspace = true, optional = true }
 openssl = { workspace = true, optional = true }
 
+# ktls
+openssl-ktls = { workspace = true, optional = true, features = ["tokio"], default-features = false }
+
 # schannel
 tokio-schannel = { workspace = true, optional = true}
 schannel = { workspace = true, optional = true }
 
 [features]
-default = ["native", "rustls", "openssl", "schannel" ]
+default = []
 native = ["dep:tokio-native-tls"]
 rustls = ["dep:tokio-rustls"]
 openssl = ["dep:tokio-openssl", "dep:openssl"]
+openssl-ktls = ["dep:openssl-ktls"]
 schannel = ["dep:tokio-schannel", "dep:schannel"]
