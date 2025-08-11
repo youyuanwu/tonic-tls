@@ -46,7 +46,15 @@ impl Connected for SslStream {
             })
             .map(Arc::new);
 
-        SslConnectInfo { inner: info, certs }
+        let ktls_recv_enabled = self.inner.ktls_recv_enabled();
+        let ktls_send_enabled = self.inner.ktls_send_enabled();
+
+        SslConnectInfo {
+            inner: info,
+            certs,
+            ktls_recv_enabled,
+            ktls_send_enabled,
+        }
     }
 }
 
@@ -87,6 +95,8 @@ impl AsyncWrite for SslStream {
 pub struct SslConnectInfo {
     inner: TcpConnectInfo,
     certs: Option<Arc<Vec<X509>>>,
+    ktls_recv_enabled: bool,
+    ktls_send_enabled: bool,
 }
 
 impl SslConnectInfo {
@@ -103,5 +113,15 @@ impl SslConnectInfo {
     /// Return the set of connected peer SSL certificates.
     pub fn peer_certs(&self) -> Option<Arc<Vec<X509>>> {
         self.certs.clone()
+    }
+
+    /// Returns if ktls receive is enabled.
+    pub fn ktls_recv_enabled(&self) -> bool {
+        self.ktls_recv_enabled
+    }
+
+    /// Returns if ktls send is enabled.
+    pub fn ktls_send_enabled(&self) -> bool {
+        self.ktls_send_enabled
     }
 }

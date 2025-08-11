@@ -24,7 +24,11 @@ impl helloworld::greeter_server::Greeter for OpensslKtlsGreeter {
             .get::<tonic_tls::openssl_ktls::SslConnectInfo>();
         let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
         let peer_certs = conn_info.and_then(|i| i.peer_certs());
-        println!("Got a request from {remote_addr:?} with certs: {peer_certs:?}");
+        let ktls_recv_enabled = conn_info.is_some_and(|i| i.ktls_recv_enabled());
+        let ktls_send_enabled = conn_info.is_some_and(|i| i.ktls_send_enabled());
+        println!(
+            "Got a request from {remote_addr:?} with certs: {peer_certs:?}, ktls_recv_enabled: {ktls_recv_enabled}, ktls_send_enabled: {ktls_send_enabled}"
+        );
 
         let reply = HelloReply {
             message: format!("Hello {}!", request.into_inner().name),
