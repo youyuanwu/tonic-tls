@@ -2,7 +2,8 @@ pub mod openssl_gen;
 pub mod helloworld {
     tonic::include_proto!("helloworld");
 }
-#[cfg(test)]
+/// Only run this on linux
+#[cfg(all(test, target_os = "linux"))]
 mod ktls_tests;
 
 #[cfg(test)]
