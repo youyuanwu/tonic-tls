@@ -1,25 +1,27 @@
+//! Ktls based tests.
+//! Ktls is not enabled, because some systems does not have openssl compiled with ktls flag.
+//! The ktls streams should work without ktls enabled.
+use std::net::SocketAddr;
+
 use super::*;
 use crate::helloworld::{self, HelloReply, HelloRequest};
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status,
-    transport::{
-        Channel,
-        server::{TcpConnectInfo, TcpIncoming},
-    },
+    transport::{Channel, server::TcpIncoming},
 };
 
-pub struct OpensslGreeter {}
+pub struct OpensslKtlsGreeter {}
 
 #[tonic::async_trait]
-impl helloworld::greeter_server::Greeter for OpensslGreeter {
+impl helloworld::greeter_server::Greeter for OpensslKtlsGreeter {
     async fn say_hello(
         &self,
         request: Request<HelloRequest>,
     ) -> Result<Response<HelloReply>, Status> {
         let conn_info = request
             .extensions()
-            .get::<tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>>();
+            .get::<tonic_tls::openssl_ktls::SslConnectInfo>();
         let remote_addr = conn_info.as_ref().and_then(|i| i.get_ref().remote_addr());
         let peer_certs = conn_info.and_then(|i| i.peer_certs());
         println!("Got a request from {remote_addr:?} with certs: {peer_certs:?}");
@@ -30,7 +32,7 @@ impl helloworld::greeter_server::Greeter for OpensslGreeter {
         Ok(Response::new(reply))
     }
 }
-async fn connect_openssl_tonic_channel(
+async fn connect_openssl_ktls_tonic_channel(
     cert: &openssl::x509::X509,
     addr: SocketAddr,
 ) -> Result<Channel, tonic_tls::Error> {
@@ -53,13 +55,13 @@ async fn connect_openssl_tonic_channel(
     let url = format!("https://localhost:{}", addr.port());
     let dnsname = "localhost".to_string();
     let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
-    ep.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
+    ep.connect_with_connector(tonic_tls::openssl_ktls::TlsConnector::new(
         &ep, connector, dnsname,
     ))
     .await
     .map_err(tonic_tls::Error::from)
 }
-pub fn create_openssl_acceptor(
+pub fn create_openssl_ktls_acceptor(
     cert: &openssl::x509::X509,
     key: &openssl::pkey::PKey<openssl::pkey::Private>,
 ) -> openssl::ssl::SslAcceptor {
@@ -84,13 +86,13 @@ pub fn create_openssl_acceptor(
     acceptor.build()
 }
 
-async fn run_openssl_tonic_server(
+async fn run_openssl_ktls_tonic_server(
     token: CancellationToken,
     tcp_s: TcpIncoming,
     tls_acceptor: openssl::ssl::SslAcceptor,
 ) {
-    let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_s, tls_acceptor);
-    let greeter = OpensslGreeter {};
+    let incoming = tonic_tls::openssl_ktls::TlsIncoming::new(tcp_s, tls_acceptor);
+    let greeter = OpensslKtlsGreeter {};
     tonic::transport::Server::builder()
         .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
         .serve_with_incoming_shutdown(incoming, async move { token.cancelled().await })
@@ -98,27 +100,27 @@ async fn run_openssl_tonic_server(
         .unwrap();
 }
 #[tokio::test]
-async fn openssl_test() {
+async fn openssl_ktls_test() {
     // Generate a certificate that's valid for "localhost" and "hello.world.example"
-    let (cert, key) = make_test_cert2(vec![
+    let (cert, key) = tests::make_test_cert2(vec![
         "hello.world.example".to_string(),
         "localhost".to_string(),
     ]);
-    let (cert2, _) = make_test_cert2(vec![
+    let (cert2, _) = tests::make_test_cert2(vec![
         "hello.world.example2".to_string(),
         "localhost2".to_string(),
     ]);
 
     // get a random port on localhost from os
-    let (listener, addr) = create_listener_server().await;
+    let (listener, addr) = tests::create_listener_server().await;
 
     let sv_token = CancellationToken::new();
     let sv_token_cp = sv_token.clone();
 
-    let acceptor = create_openssl_acceptor(&cert, &key);
+    let acceptor = create_openssl_ktls_acceptor(&cert, &key);
     // start server in background
     let sv_h = tokio::spawn(async move {
-        run_openssl_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
+        run_openssl_ktls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
     });
 
     println!("running server on {addr}");
@@ -128,12 +130,12 @@ async fn openssl_test() {
 
     // send a request with a wrong cert and verify it fails
     {
-        let e = connect_openssl_tonic_channel(&cert2, addr)
+        let e = connect_openssl_ktls_tonic_channel(&cert2, addr)
             .await
             .expect_err("unexpected success");
         // there is a double wrappring of the error of ssl Error
         let src = e.source().unwrap().source().unwrap();
-        let ssl_e = src.downcast_ref::<openssl::ssl::Error>().unwrap();
+        let ssl_e = src.downcast_ref::<::openssl_ktls::error::Error>().unwrap();
         // Check generic ssl error. The detail of the error should be server cert untrusted, which is unimportant,
         // since the test case here only aims to cause an ssl failure between client and server.
         assert_eq!(ssl_e.code(), openssl::ssl::ErrorCode::SSL);
@@ -142,7 +144,7 @@ async fn openssl_test() {
     }
 
     // get client and send request
-    let ch = connect_openssl_tonic_channel(&cert, addr)
+    let ch = connect_openssl_ktls_tonic_channel(&cert, addr)
         .await
         .expect("cannot connect");
     let mut client = helloworld::greeter_client::GreeterClient::new(ch);

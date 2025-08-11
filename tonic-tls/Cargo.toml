@@ -34,7 +34,7 @@ tokio-openssl = { workspace = true, optional = true }
 openssl = { workspace = true, optional = true }
 
 # ktls
-openssl-ktls = { workspace = true, optional = true, features = ["tokio"] }
+openssl-ktls = { workspace = true, optional = true, features = ["tokio"], default-features = false }
 
 # schannel
 tokio-schannel = { workspace = true, optional = true}

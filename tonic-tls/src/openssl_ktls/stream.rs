@@ -6,26 +6,30 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tonic::transport::server::Connected;
+use tonic::transport::server::{Connected, TcpConnectInfo};
 
 /// A `SslStream` wrapper type that implements tokio's io traits
 /// and tonic's [Connected] trait.
 #[derive(Debug)]
-pub struct SslStream<S> {
+pub struct SslStream {
     inner: openssl_ktls::TokioSslStream,
 }
 
-impl<S> SslStream<S> {
+impl SslStream {
     pub fn new(inner: openssl_ktls::TokioSslStream) -> Self {
         Self { inner }
     }
 }
 
-impl<S: Connected> Connected for SslStream<S> {
-    type ConnectInfo = SslConnectInfo<S::ConnectInfo>;
+impl Connected for SslStream {
+    type ConnectInfo = SslConnectInfo;
 
     fn connect_info(&self) -> Self::ConnectInfo {
-        let inner = self.inner.get_ref().connect_info();
+        let inner = self.inner.get_ref();
+        let info = TcpConnectInfo {
+            local_addr: inner.local_addr().ok(),
+            remote_addr: inner.peer_addr().ok(),
+        };
 
         // Currently openssl rust does not support clone of objects
         // So we need to reparse the X509 certs.
@@ -42,14 +46,11 @@ impl<S: Connected> Connected for SslStream<S> {
             })
             .map(Arc::new);
 
-        SslConnectInfo { inner, certs }
+        SslConnectInfo { inner: info, certs }
     }
 }
 
-impl<S> AsyncRead for SslStream<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+impl AsyncRead for SslStream {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -59,10 +60,7 @@ where
     }
 }
 
-impl<S> AsyncWrite for SslStream<S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+impl AsyncWrite for SslStream {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -86,19 +84,19 @@ where
 ///
 /// See [`Connected`] for more details.
 #[derive(Debug, Clone)]
-pub struct SslConnectInfo<T> {
-    inner: T,
+pub struct SslConnectInfo {
+    inner: TcpConnectInfo,
     certs: Option<Arc<Vec<X509>>>,
 }
 
-impl<T> SslConnectInfo<T> {
+impl SslConnectInfo {
     /// Get a reference to the underlying connection info.
-    pub fn get_ref(&self) -> &T {
+    pub fn get_ref(&self) -> &TcpConnectInfo {
         &self.inner
     }
 
     /// Get a mutable reference to the underlying connection info.
-    pub fn get_mut(&mut self) -> &mut T {
+    pub fn get_mut(&mut self) -> &mut TcpConnectInfo {
         &mut self.inner
     }
 

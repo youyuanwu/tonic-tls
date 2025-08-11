@@ -32,6 +32,7 @@ tokio-native-tls.workspace = true
 native-tls.workspace = true
 tokio-schannel.workspace = true
 schannel.workspace = true
+openssl-ktls.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true

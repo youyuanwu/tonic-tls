@@ -25,7 +25,7 @@ mod tests {
 
     /// ring does not support RSA so rcgen does not support it. Windows does not support elliplica curve?
     /// So we use openssl to generate.
-    fn make_test_cert2(
+    pub(crate) fn make_test_cert2(
         subject_alt_names: Vec<String>,
     ) -> (
         openssl::x509::X509,

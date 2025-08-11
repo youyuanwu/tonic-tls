@@ -635,9 +635,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-ktls"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41c796f2b645b7ec891a96d275ce607d6cf2e83b54a2edecd8e00ad948b07fc3"
+checksum = "312f96a89e67e2dffb93716e8e1f42f32326a2bf410265c71e154275278e6491"
 dependencies = [
  "foreign-types-shared",
  "openssl",
@@ -1342,6 +1342,7 @@ dependencies = [
  "futures",
  "native-tls",
  "openssl",
+ "openssl-ktls",
  "prost",
  "rcgen",
  "rustls",

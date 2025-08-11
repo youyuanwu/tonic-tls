@@ -1,3 +1,5 @@
+//! Experimental support for openssl ktls based backend.
+
 mod client;
 pub use client::TlsConnector;
 mod server;
