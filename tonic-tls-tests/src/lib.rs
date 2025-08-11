@@ -3,6 +3,9 @@ pub mod helloworld {
     tonic::include_proto!("helloworld");
 }
 #[cfg(test)]
+mod ktls_tests;
+
+#[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
 

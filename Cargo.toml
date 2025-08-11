@@ -5,7 +5,7 @@ members = [
 ]
 
 [workspace.dependencies]
-tonic-tls = { path = "tonic-tls" , default-features = true}
+tonic-tls = { path = "tonic-tls" , default-features = false, features = ["openssl-ktls", "native", "rustls", "openssl", "schannel"] }
 
 tokio = "1"
 tokio-rustls = { version = "0.26", default-features = false }
@@ -28,6 +28,9 @@ openssl = "0.10"
 # schannel
 tokio-schannel = "0.2"
 schannel = "0.1"
+
+# ktls
+openssl-ktls = { version = "0.2", default-features = false, features = ["tokio"] }
 
 # for dev only
 rcgen = {version = "0.14", default-features = true }

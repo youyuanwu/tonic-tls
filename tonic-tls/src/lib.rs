@@ -62,6 +62,9 @@ pub mod rustls;
 #[cfg(feature = "openssl")]
 pub mod openssl;
 
+#[cfg(feature = "openssl-ktls")]
+pub mod openssl_ktls;
+
 #[cfg(all(feature = "schannel", target_os = "windows"))]
 pub mod schannel;
 
