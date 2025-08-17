@@ -12,7 +12,7 @@ keywords = ["gRPC", "tls", "rustls", "native-tls"]
 readme = "../README.md"
 
 [dependencies]
-tokio.workspace = true
+tokio = { workspace = true, default-features = false }
 async-stream.workspace = true
 tracing.workspace = true
 futures.workspace = true
