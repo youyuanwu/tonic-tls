@@ -20,7 +20,7 @@ prost.workspace = true
 tonic-prost.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["signal"]}
+tokio = { workspace = true }
 rustls = {workspace =  true, features = ["std", "ring"]}
 tokio-rustls.workspace = true
 rcgen.workspace = true
