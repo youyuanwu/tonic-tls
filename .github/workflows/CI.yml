@@ -7,20 +7,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
+        os: [ windows-2025, ubuntu-latest ]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     
-    # on windows we need to install openssl
-    - name: Get vcpkg
+    # Use OpenSSL on Windows. It is the ShiningLight.OpenSSL.Dev package.
+    - name: Set openssl environment variables
       if: runner.os == 'Windows'
-      uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: dd3adcf020e69077e83e92a0a293ceca734f6288
-
-    - name: vcpkg install
-      if: runner.os == 'Windows'
-      run: vcpkg install openssl:x64-windows-static-md
+      run: |
+        echo "OPENSSL_DIR=C:/Program Files/OpenSSL" >> $env:GITHUB_ENV
+        echo "OPENSSL_LIB_DIR=C:/Program Files/OpenSSL/lib/VC/x64/MDd" >> $env:GITHUB_ENV
+      shell: pwsh
 
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
