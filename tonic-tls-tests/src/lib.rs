@@ -289,7 +289,9 @@ mod tests {
             let dnsname = "localhost".to_string();
             let ep = tonic::transport::Endpoint::from_shared(url)
                 .unwrap()
-                .tcp_keepalive(Some(Duration::from_secs(5)));
+                .tcp_keepalive(Some(Duration::from_secs(5)))
+                .tcp_keepalive_interval(Some(Duration::from_secs(3)))
+                .tcp_keepalive_retries(Some(3));
             ep.connect_with_connector(tonic_tls::native::TlsConnector::new(&ep, tc, dnsname))
                 .await
                 .map_err(tonic_tls::Error::from)
