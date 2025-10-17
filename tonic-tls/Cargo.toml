@@ -1,12 +1,12 @@
 [package]
 name = "tonic-tls"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "MIT"
 authors = ["youyuanwu@outlook.com"]
 repository = "https://github.com/youyuanwu/tonic-tls"
 documentation = "https://docs.rs/tonic-tls/latest/tonic_tls/"
-description = "Tls wrappers for tonic."
+description = "TLS for tonic gRPC."
 categories = ["web-programming", "network-programming"]
 keywords = ["gRPC", "tls", "rustls", "native-tls"]
 readme = "../README.md"
