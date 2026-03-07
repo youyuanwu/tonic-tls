@@ -51,7 +51,7 @@ mod client;
 pub use client::{TlsConnector, connector_inner};
 mod endpoint;
 mod server;
-pub use server::{TlsAcceptor, incoming_inner};
+pub use server::{Incoming, TlsAcceptor, incoming_inner};
 
 #[cfg(feature = "native")]
 pub mod native;
