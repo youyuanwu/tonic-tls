@@ -1,4 +1,4 @@
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use tonic::transport::Uri;
 use tower::Service;
@@ -7,15 +7,14 @@ use tower::Service;
 #[derive(Clone)]
 struct NativeConnector(tokio_native_tls::TlsConnector);
 
-impl crate::TlsConnector<TcpStream> for NativeConnector {
-    type TlsStream = tokio_native_tls::TlsStream<TcpStream>;
+impl<S> crate::TlsConnector<S> for NativeConnector
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = tokio_native_tls::TlsStream<S>;
     type Arg = String;
 
-    async fn connect(
-        &self,
-        domain: Self::Arg,
-        stream: TcpStream,
-    ) -> Result<Self::TlsStream, crate::Error> {
+    async fn connect(&self, domain: Self::Arg, stream: S) -> Result<Self::TlsStream, crate::Error> {
         self.0
             .connect(domain.as_str(), stream)
             .await
@@ -25,11 +24,11 @@ impl crate::TlsConnector<TcpStream> for NativeConnector {
 
 /// tonic client connector to connect to https endpoint at addr using
 /// native tls.
-pub struct TlsConnector {
-    inner: crate::client::TlsBoxedService<tokio_native_tls::TlsStream<TcpStream>>,
+pub struct TlsConnector<IO> {
+    inner: crate::client::TlsBoxedService<tokio_native_tls::TlsStream<IO>>,
 }
 
-impl TlsConnector {
+impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate, and if none.
     /// Disabling validation is not supported.
     /// See [connect](tokio_native_tls::native_tls::TlsConnector::connect) for details.
@@ -39,21 +38,22 @@ impl TlsConnector {
     ///     endpoint: tonic::transport::Endpoint,
     ///     ssl_conn: tokio_native_tls::native_tls::TlsConnector)
     /// -> tonic::transport::Channel {
+    ///     let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
     ///     endpoint.connect_with_connector(tonic_tls::native::TlsConnector::new(
-    ///         &endpoint,
+    ///         transport,
     ///         ssl_conn,
     ///         "localhost".to_string(),
     ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        endpoint: &tonic::transport::Endpoint,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: tokio_native_tls::native_tls::TlsConnector,
         domain: String,
     ) -> Self {
         Self {
             inner: crate::connector_inner(
-                endpoint,
+                transport,
                 NativeConnector(tokio_native_tls::TlsConnector::from(ssl_conn)),
                 domain,
             ),
@@ -61,8 +61,8 @@ impl TlsConnector {
     }
 }
 
-impl Service<Uri> for TlsConnector {
-    type Response = hyper_util::rt::TokioIo<tokio_native_tls::TlsStream<TcpStream>>;
+impl<IO: Send + 'static> Service<Uri> for TlsConnector<IO> {
+    type Response = hyper_util::rt::TokioIo<tokio_native_tls::TlsStream<IO>>;
 
     type Error = crate::Error;
 

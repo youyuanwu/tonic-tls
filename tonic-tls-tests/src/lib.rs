@@ -7,6 +7,9 @@ pub mod helloworld {
 mod ktls_tests;
 
 #[cfg(test)]
+mod duplex_tests;
+
+#[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
 
@@ -93,8 +96,9 @@ mod tests {
             let dnsname = ServerName::try_from("localhost").unwrap();
 
             let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+            let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
             ep.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
-                &ep,
+                transport,
                 Arc::new(config),
                 dnsname,
             ))
@@ -292,7 +296,8 @@ mod tests {
                 .tcp_keepalive(Some(Duration::from_secs(5)))
                 .tcp_keepalive_interval(Some(Duration::from_secs(3)))
                 .tcp_keepalive_retries(Some(3));
-            ep.connect_with_connector(tonic_tls::native::TlsConnector::new(&ep, tc, dnsname))
+            let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
+            ep.connect_with_connector(tonic_tls::native::TlsConnector::new(transport, tc, dnsname))
                 .await
                 .map_err(tonic_tls::Error::from)
         }
@@ -426,8 +431,9 @@ mod tests {
             let url = format!("https://localhost:{}", addr.port());
             let dnsname = "localhost".to_string();
             let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+            let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
             ep.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-                &ep, connector, dnsname,
+                transport, connector, dnsname,
             ))
             .await
             .map_err(tonic_tls::Error::from)
@@ -666,9 +672,12 @@ mod tests {
                 .unwrap();
             let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
 
-            ep.connect_with_connector(tonic_tls::schannel::TlsConnector::new(&ep, builder, creds))
-                .await
-                .map_err(tonic_tls::Error::from)
+            let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
+            ep.connect_with_connector(tonic_tls::schannel::TlsConnector::new(
+                transport, builder, creds,
+            ))
+            .await
+            .map_err(tonic_tls::Error::from)
         }
         pub fn create_schannel_acceptor() -> schannel::tls_stream::Builder {
             let mut builder = schannel::tls_stream::Builder::new();

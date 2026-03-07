@@ -1,24 +1,23 @@
 use std::sync::Arc;
 
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tonic::transport::Uri;
 use tower::Service;
 
-pub type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
+pub type TlsStream<IO> = tokio_rustls::client::TlsStream<IO>;
 
 /// Internal implementation of connector wrapper.
 #[derive(Clone)]
 struct RustlsConnector(tokio_rustls::TlsConnector);
 
-impl crate::TlsConnector<TcpStream> for RustlsConnector {
-    type TlsStream = TlsStream;
+impl<S> crate::TlsConnector<S> for RustlsConnector
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = TlsStream<S>;
     type Arg = tokio_rustls::rustls::pki_types::ServerName<'static>;
 
-    async fn connect(
-        &self,
-        domain: Self::Arg,
-        stream: TcpStream,
-    ) -> Result<Self::TlsStream, crate::Error> {
+    async fn connect(&self, domain: Self::Arg, stream: S) -> Result<Self::TlsStream, crate::Error> {
         self.0
             .connect(domain, stream)
             .await
@@ -28,11 +27,11 @@ impl crate::TlsConnector<TcpStream> for RustlsConnector {
 
 /// tonic client connector to connect to https endpoint at addr using
 /// rustls.
-pub struct TlsConnector {
-    inner: crate::client::TlsBoxedService<TlsStream>,
+pub struct TlsConnector<IO> {
+    inner: crate::client::TlsBoxedService<TlsStream<IO>>,
 }
 
-impl TlsConnector {
+impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate.
     /// Disabling validation is not supported.
     /// See [connect](tokio_rustls::TlsConnector::connect) for details.
@@ -43,21 +42,22 @@ impl TlsConnector {
     ///     ssl_conn: std::sync::Arc<tokio_rustls::rustls::ClientConfig>)
     /// -> tonic::transport::Channel {    
     ///     let dnsname = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    ///     let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
     ///     endpoint.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
-    ///         &endpoint,
+    ///         transport,
     ///         ssl_conn,
     ///         dnsname,
     ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        endpoint: &tonic::transport::Endpoint,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: Arc<tokio_rustls::rustls::ClientConfig>,
         domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
     ) -> Self {
         Self {
             inner: crate::connector_inner(
-                endpoint,
+                transport,
                 RustlsConnector(tokio_rustls::TlsConnector::from(ssl_conn)),
                 domain,
             ),
@@ -65,8 +65,8 @@ impl TlsConnector {
     }
 }
 
-impl Service<Uri> for TlsConnector {
-    type Response = hyper_util::rt::TokioIo<TlsStream>;
+impl<IO: Send + 'static> Service<Uri> for TlsConnector<IO> {
+    type Response = hyper_util::rt::TokioIo<TlsStream<IO>>;
 
     type Error = crate::Error;
 

@@ -59,8 +59,9 @@ async fn connect_openssl_ktls_tonic_channel(
     let url = format!("https://localhost:{}", addr.port());
     let dnsname = "localhost".to_string();
     let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
     ep.connect_with_connector(tonic_tls::openssl_ktls::TlsConnector::new(
-        &ep, connector, dnsname,
+        transport, connector, dnsname,
     ))
     .await
     .map_err(tonic_tls::Error::from)

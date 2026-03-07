@@ -1,11 +1,8 @@
 use std::time::Duration;
 
-use hyper::Uri;
-
 /// Data and options needed from [Endpoint](tonic::transport::Endpoint)
 /// in tls connector layer.
 pub(crate) struct TcpOpt {
-    pub(crate) uri: Uri,
     pub(crate) keep_alive_duration: Option<Duration>,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
     pub(crate) tcp_keepalive_retries: Option<u32>,
@@ -20,7 +17,6 @@ impl TcpOpt {
             tcp_keepalive_interval: ep.get_tcp_keepalive_interval(),
             tcp_keepalive_retries: ep.get_tcp_keepalive_retries(),
             no_delay: ep.get_tcp_nodelay(),
-            uri: ep.uri().clone(),
         }
     }
 
