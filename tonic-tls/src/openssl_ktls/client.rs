@@ -7,6 +7,8 @@ use tower::Service;
 #[derive(Clone)]
 struct OpensslKtlsConnector(openssl::ssl::SslConnector);
 
+// openssl_ktls::TokioSslStream is not generic over the transport,
+// so this impl is restricted to TcpStream.
 impl crate::TlsConnector<TcpStream> for OpensslKtlsConnector {
     type TlsStream = openssl_ktls::TokioSslStream;
     type Arg = String;
@@ -41,20 +43,21 @@ impl TlsConnector {
     ///     endpoint: tonic::transport::Endpoint,
     ///     ssl_conn: openssl::ssl::SslConnector
     /// ) -> tonic::transport::Channel {
+    ///     let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
     ///     endpoint.connect_with_connector(tonic_tls::openssl_ktls::TlsConnector::new(
-    ///         &endpoint,
+    ///         transport,
     ///         ssl_conn,
     ///        "localhost".to_string(),
     ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        endpoint: &tonic::transport::Endpoint,
+        transport: impl crate::Transport<Io = TcpStream>,
         ssl_conn: openssl::ssl::SslConnector,
         domain: String,
     ) -> Self {
         Self {
-            inner: crate::connector_inner(endpoint, OpensslKtlsConnector(ssl_conn), domain),
+            inner: crate::connector_inner(transport, OpensslKtlsConnector(ssl_conn), domain),
         }
     }
 }

@@ -1,4 +1,5 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -25,33 +26,64 @@ where
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, crate::Error>> + Send;
 }
 
+/// Trait for abstracting the transport connection step.
+/// Implement this for custom transports (e.g. Unix sockets, VSOCK).
+pub trait Transport: Clone + Send + 'static {
+    /// The connection type produced by this transport.
+    type Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static;
+    /// The error type returned by connect.
+    type Error: Into<crate::Error>;
+
+    fn connect(
+        &self,
+        uri: &Uri,
+    ) -> impl std::future::Future<Output = Result<Self::Io, Self::Error>> + Send;
+}
+
+/// Default TCP transport. Handles DNS resolution, TCP connect,
+/// and applies TCP options (keepalive, nodelay).
+#[derive(Clone)]
+pub struct TcpTransport {
+    tcp_opt: Arc<TcpOpt>,
+}
+
+impl TcpTransport {
+    pub fn from_endpoint(ep: &tonic::transport::Endpoint) -> Self {
+        Self {
+            tcp_opt: Arc::new(TcpOpt::from_ep(ep)),
+        }
+    }
+}
+
+impl Transport for TcpTransport {
+    type Io = TcpStream;
+    type Error = std::io::Error;
+
+    async fn connect(&self, uri: &Uri) -> Result<Self::Io, Self::Error> {
+        let addrs = dns_resolve(uri).await?;
+        let stream = connect_tcp(addrs).await?;
+        self.tcp_opt.apply_opt(&stream)?;
+        Ok(stream)
+    }
+}
+
 pub(crate) type TlsBoxedService<TS> =
     tower::util::BoxService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
 
 /// Not intended to be used by applications directly.
-/// Applications should use the tls backend api, for example [super::openssl::connector]
-pub fn connector_inner<C, TS>(
-    endpoint: &tonic::transport::Endpoint,
-    ssl_conn: C,
-    arg: C::Arg,
-) -> TlsBoxedService<TS>
+/// Applications should use the tls backend api, for example [super::openssl::TlsConnector]
+pub fn connector_inner<T, C, TS>(transport: T, ssl_conn: C, arg: C::Arg) -> TlsBoxedService<TS>
 where
-    C: TlsConnector<TcpStream, TlsStream = TS>,
+    T: Transport,
+    C: TlsConnector<T::Io, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
-    let tcp_opt = Arc::new(TcpOpt::from_ep(endpoint));
-    let svc = tower::service_fn(move |_: Uri| {
-        let tcp_opt = tcp_opt.clone();
+    let svc = tower::service_fn(move |uri: Uri| {
+        let transport = transport.clone();
         let ssl_conn = ssl_conn.clone();
         let arg = arg.clone();
         async move {
-            let addrs = dns_resolve(&tcp_opt.uri).await?;
-            // Connect and get ssl stream
-            let stream = connect_tcp(addrs).await?;
-
-            // Apply tcp options to stream.
-            tcp_opt.apply_opt(&stream)?;
-
+            let stream = transport.connect(&uri).await.map_err(Into::into)?;
             let ssl_s = ssl_conn.connect(arg, stream).await?;
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }

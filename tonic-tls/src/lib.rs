@@ -38,8 +38,9 @@
 //!     endpoint: tonic::transport::Endpoint,
 //!     ssl_conn: openssl::ssl::SslConnector
 //! ) -> tonic::transport::Channel {
+//!     let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
 //!     endpoint.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-//!         &endpoint,
+//!         transport,
 //!         ssl_conn,
 //!        "localhost".to_string(),
 //!     )).await.unwrap()
@@ -48,7 +49,7 @@
 #![doc(html_root_url = "https://docs.rs/tonic-tls/latest/tonic_tls/")]
 
 mod client;
-pub use client::{TlsConnector, connector_inner};
+pub use client::{TcpTransport, TlsConnector, Transport, connector_inner};
 mod endpoint;
 mod server;
 pub use server::{Incoming, TlsAcceptor, incoming_inner};

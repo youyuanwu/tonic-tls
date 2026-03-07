@@ -1,4 +1,4 @@
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use tonic::transport::Uri;
 use tower::Service;
@@ -7,15 +7,14 @@ use tower::Service;
 #[derive(Clone)]
 struct OpensslConnector(openssl::ssl::SslConnector);
 
-impl crate::TlsConnector<TcpStream> for OpensslConnector {
-    type TlsStream = tokio_openssl::SslStream<TcpStream>;
+impl<S> crate::TlsConnector<S> for OpensslConnector
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    type TlsStream = tokio_openssl::SslStream<S>;
     type Arg = String;
 
-    async fn connect(
-        &self,
-        domain: Self::Arg,
-        stream: TcpStream,
-    ) -> Result<Self::TlsStream, crate::Error> {
+    async fn connect(&self, domain: Self::Arg, stream: S) -> Result<Self::TlsStream, crate::Error> {
         let ssl_config = self.0.configure()?;
         // configure server name check.
         let ssl = ssl_config.into_ssl(&domain)?;
@@ -28,11 +27,11 @@ impl crate::TlsConnector<TcpStream> for OpensslConnector {
 
 /// tonic client connector to connect to https endpoint at addr using
 /// openssl settings in ssl.
-pub struct TlsConnector {
-    inner: crate::client::TlsBoxedService<tokio_openssl::SslStream<TcpStream>>,
+pub struct TlsConnector<IO> {
+    inner: crate::client::TlsBoxedService<tokio_openssl::SslStream<IO>>,
 }
 
-impl TlsConnector {
+impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate.
     /// See [connect](openssl::ssl::SslConnector::connect) for details.
     /// # Examples
@@ -41,26 +40,27 @@ impl TlsConnector {
     ///     endpoint: tonic::transport::Endpoint,
     ///     ssl_conn: openssl::ssl::SslConnector
     /// ) -> tonic::transport::Channel {
+    ///     let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
     ///     endpoint.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-    ///         &endpoint,
+    ///         transport,
     ///         ssl_conn,
     ///        "localhost".to_string(),
     ///     )).await.unwrap()
     /// }
     /// ```
     pub fn new(
-        endpoint: &tonic::transport::Endpoint,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: openssl::ssl::SslConnector,
         domain: String,
     ) -> Self {
         Self {
-            inner: crate::connector_inner(endpoint, OpensslConnector(ssl_conn), domain),
+            inner: crate::connector_inner(transport, OpensslConnector(ssl_conn), domain),
         }
     }
 }
 
-impl Service<Uri> for TlsConnector {
-    type Response = hyper_util::rt::TokioIo<tokio_openssl::SslStream<TcpStream>>;
+impl<IO: Send + 'static> Service<Uri> for TlsConnector<IO> {
+    type Response = hyper_util::rt::TokioIo<tokio_openssl::SslStream<IO>>;
 
     type Error = crate::Error;
 
