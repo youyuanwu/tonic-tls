@@ -733,9 +733,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-ktls"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d5234f72525be787c87212d9c1c78cb18f9707c5a684d9fa8a04feaa3b7ed47"
+checksum = "679df7596865ef1325b0283fc5c4d0a161b10b2fa08465551cd745f038b6df8f"
 dependencies = [
  "foreign-types-shared",
  "openssl",
@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-tls"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "async-stream",
  "futures",

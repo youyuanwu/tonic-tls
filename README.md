@@ -35,13 +35,14 @@ Server::builder()
 ```
 
 ```rs
-// client example for openssl:
+// Client example for openssl:
 async fn connect_tonic_channel(
     endpoint: tonic::transport::Endpoint,
     ssl_conn: openssl::ssl::SslConnector
 ) -> tonic::transport::Channel {
+    let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
     endpoint.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
-        &endpoint,
+        transport,
         ssl_conn,
        "localhost".to_string(),
     )).await.unwrap()
