@@ -30,12 +30,12 @@ where
 
 /// The same as the [incoming] returned stream,
 /// but wrapped in a struct.
-pub struct TlsIncoming {
-    inner: crate::server::TlsIncoming<SslStream<tokio::net::TcpStream>>,
+pub struct TlsIncoming<IO> {
+    inner: crate::server::TlsIncoming<SslStream<IO>>,
 }
 
-impl TlsIncoming {
-    /// Creates a tls incoming stream on top of a tcp incoming stream
+impl<IO: AsyncRead + AsyncWrite + Send + Sync + std::fmt::Debug + Unpin + 'static> TlsIncoming<IO> {
+    /// Creates a tls incoming stream on top of an incoming stream
     /// # Examples
     /// ```no_run
     /// # use tower::Service;
@@ -58,16 +58,16 @@ impl TlsIncoming {
     ///    .serve_with_incoming(inc);
     /// # Ok(())
     /// # }
-    pub fn new(tcp_incoming: tonic::transport::server::TcpIncoming, acceptor: SslAcceptor) -> Self {
+    pub fn new(incoming: impl crate::Incoming<Io = IO>, acceptor: SslAcceptor) -> Self {
         let acceptor = OpensslTlsAcceptor::new(acceptor);
         Self {
-            inner: crate::server::incoming_inner(tcp_incoming, acceptor),
+            inner: crate::server::incoming_inner(incoming, acceptor),
         }
     }
 }
 
-impl Stream for TlsIncoming {
-    type Item = Result<SslStream<tokio::net::TcpStream>, crate::Error>;
+impl<IO> Stream for TlsIncoming<IO> {
+    type Item = Result<SslStream<IO>, crate::Error>;
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

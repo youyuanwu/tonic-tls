@@ -54,10 +54,13 @@ impl TlsIncoming {
     ///    .serve_with_incoming(inc);
     /// # Ok(())
     /// # }
-    pub fn new(tcp_incoming: tonic::transport::server::TcpIncoming, acceptor: SslAcceptor) -> Self {
+    pub fn new(
+        incoming: impl crate::Incoming<Io = tokio::net::TcpStream>,
+        acceptor: SslAcceptor,
+    ) -> Self {
         let acceptor = OpensslKtlsAcceptor::new(acceptor);
         Self {
-            inner: crate::server::incoming_inner(tcp_incoming, acceptor),
+            inner: crate::server::incoming_inner(incoming, acceptor),
         }
     }
 }

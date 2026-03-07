@@ -25,24 +25,33 @@ where
     ) -> impl std::future::Future<Output = Result<Self::TlsStream, Error>> + Send;
 }
 
+/// Trait for abstracting a stream of incoming connections.
+/// Implement this for custom transports (e.g. Unix sockets, VSOCK).
+pub trait Incoming: Stream<Item = Result<Self::Io, Self::Error>> + Send + 'static {
+    /// The connection type yielded by the stream.
+    type Io: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static;
+    /// The error type yielded by the stream.
+    type Error: Into<crate::Error>;
+}
+
+impl Incoming for tonic::transport::server::TcpIncoming {
+    type Io = tokio::net::TcpStream;
+    type Error = io::Error;
+}
+
 /// Wraps the incoming stream into a tls stream.
 /// Use this only when implementing tls backends.
-/// For applications, use a tls backend instead. For example [incomming](openssl::incoming).
+/// For applications, use a tls backend instead. For example [incoming](openssl::incoming).
 ///
-/// IO is the input io type, IE is the input error type.
-/// A is acceptor, TS is the output tls stream type.
-pub fn incoming_inner<IO, IE, A, TS>(
-    incoming: impl Stream<Item = Result<IO, IE>> + Send + 'static,
-    acceptor: A,
-) -> crate::server::TlsIncoming<TS>
+/// I is the incoming stream, A is acceptor, TS is the output tls stream type.
+pub fn incoming_inner<I, A, TS>(incoming: I, acceptor: A) -> crate::server::TlsIncoming<TS>
 where
-    IO: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static,
-    IE: Into<crate::Error>,
-    A: TlsAcceptor<IO, TlsStream = TS>,
+    I: Incoming,
+    A: TlsAcceptor<I::Io, TlsStream = TS>,
     TS: Send + 'static,
 {
     let stream = async_stream::try_stream! {
-        let mut incoming = pin!(incoming);
+        let mut incoming = pin!(incoming.map_err(Into::into));
 
         let mut tasks = tokio::task::JoinSet::new();
 
@@ -80,18 +89,15 @@ where
     stream.boxed()
 }
 
-async fn select<IO: 'static, IE, TS: 'static>(
-    incoming: &mut (impl Stream<Item = Result<IO, IE>> + Unpin),
+async fn select<IO: 'static, TS: 'static>(
+    incoming: &mut (impl Stream<Item = Result<IO, crate::Error>> + Unpin),
     tasks: &mut tokio::task::JoinSet<Result<TS, crate::Error>>,
-) -> SelectOutput<IO, TS>
-where
-    IE: Into<crate::Error>,
-{
+) -> SelectOutput<IO, TS> {
     let incoming_stream_future = async {
         match incoming.try_next().await {
             Ok(Some(stream)) => SelectOutput::Incoming(stream),
             Ok(None) => SelectOutput::Done,
-            Err(e) => SelectOutput::TcpErr(e.into()),
+            Err(e) => SelectOutput::TcpErr(e),
         }
     };
 
