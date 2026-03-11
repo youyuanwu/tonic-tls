@@ -25,7 +25,7 @@ impl SchannelAcceptor {
 
 impl<S> crate::server::TlsAcceptor<S> for SchannelAcceptor
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream = TlsStream<S>;
     async fn accept(&self, stream: S) -> Result<TlsStream<S>, crate::Error> {
@@ -46,7 +46,7 @@ pub struct TlsIncoming<IO> {
     inner: crate::server::TlsIncoming<TlsStream<IO>>,
 }
 
-impl<IO: AsyncRead + AsyncWrite + Send + Sync + std::fmt::Debug + Unpin + 'static> TlsIncoming<IO> {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsIncoming<IO> {
     /// Creates a tls incoming stream on top of an incoming stream
     /// # Examples
     /// ```no_run

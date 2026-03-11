@@ -14,7 +14,7 @@ use crate::endpoint::TcpOpt;
 /// To add a new tls backend, implement this and pass it into [connector_inner].
 pub trait TlsConnector<S>: Clone + Send + 'static
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream;
     /// Argument for connect.
@@ -30,7 +30,7 @@ where
 /// Implement this for custom transports (e.g. Unix sockets, VSOCK).
 pub trait Transport: Clone + Send + 'static {
     /// The connection type produced by this transport.
-    type Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static;
+    type Io: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     /// The error type returned by connect.
     type Error: Into<crate::Error>;
 
@@ -76,7 +76,7 @@ pub fn connector_inner<T, C, TS>(transport: T, ssl_conn: C, arg: C::Arg) -> TlsB
 where
     T: Transport,
     C: TlsConnector<T::Io, TlsStream = TS>,
-    TS: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    TS: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     let svc = tower::service_fn(move |uri: Uri| {
         let transport = transport.clone();

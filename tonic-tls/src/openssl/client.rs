@@ -9,7 +9,7 @@ struct OpensslConnector(openssl::ssl::SslConnector);
 
 impl<S> crate::TlsConnector<S> for OpensslConnector
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream = tokio_openssl::SslStream<S>;
     type Arg = String;
@@ -31,7 +31,7 @@ pub struct TlsConnector<IO> {
     inner: crate::client::TlsBoxedService<tokio_openssl::SslStream<IO>>,
 }
 
-impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate.
     /// See [connect](openssl::ssl::SslConnector::connect) for details.
     /// # Examples
