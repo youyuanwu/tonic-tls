@@ -12,7 +12,7 @@ struct RustlsConnector(tokio_rustls::TlsConnector);
 
 impl<S> crate::TlsConnector<S> for RustlsConnector
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream = TlsStream<S>;
     type Arg = tokio_rustls::rustls::pki_types::ServerName<'static>;
@@ -31,7 +31,7 @@ pub struct TlsConnector<IO> {
     inner: crate::client::TlsBoxedService<TlsStream<IO>>,
 }
 
-impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate.
     /// Disabling validation is not supported.
     /// See [connect](tokio_rustls::TlsConnector::connect) for details.

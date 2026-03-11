@@ -1,5 +1,4 @@
 use futures::TryStreamExt;
-use std::fmt::Debug;
 use std::io;
 use std::{ops::ControlFlow, pin::pin};
 
@@ -16,7 +15,7 @@ pub(crate) type TlsIncoming<TS> = futures::stream::BoxStream<'static, Result<TS,
 /// implementation needs to be passed to [incoming_inner].
 pub trait TlsAcceptor<S>: Clone + Send + 'static
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream;
     fn accept(
@@ -29,7 +28,7 @@ where
 /// Implement this for custom transports (e.g. Unix sockets, VSOCK).
 pub trait Incoming: Stream<Item = Result<Self::Io, Self::Error>> + Send + 'static {
     /// The connection type yielded by the stream.
-    type Io: AsyncRead + AsyncWrite + Send + Sync + Debug + Unpin + 'static;
+    type Io: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     /// The error type yielded by the stream.
     type Error: Into<crate::Error>;
 }

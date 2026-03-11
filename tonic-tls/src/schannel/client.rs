@@ -14,7 +14,7 @@ struct SchannelConnector {
 
 impl<S> crate::TlsConnector<S> for SchannelConnector
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream = TlsStream<S>;
     type Arg = schannel::schannel_cred::SchannelCred;
@@ -40,7 +40,7 @@ pub struct TlsConnector<IO> {
     inner: crate::client::TlsBoxedService<TlsStream<IO>>,
 }
 
-impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// See [connect](schannel::tls_stream::Builder::connect) for details.
     /// # Examples
     /// ```

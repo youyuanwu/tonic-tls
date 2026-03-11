@@ -9,7 +9,7 @@ struct NativeConnector(tokio_native_tls::TlsConnector);
 
 impl<S> crate::TlsConnector<S> for NativeConnector
 where
-    S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream = tokio_native_tls::TlsStream<S>;
     type Arg = String;
@@ -28,7 +28,7 @@ pub struct TlsConnector<IO> {
     inner: crate::client::TlsBoxedService<tokio_native_tls::TlsStream<IO>>,
 }
 
-impl<IO: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> TlsConnector<IO> {
+impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// domain is the server name to validate, and if none.
     /// Disabling validation is not supported.
     /// See [connect](tokio_native_tls::native_tls::TlsConnector::connect) for details.
