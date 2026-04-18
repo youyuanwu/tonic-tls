@@ -24,7 +24,6 @@ tokio-native-tls = "0.3"
 # openssl
 tokio-openssl = "0.6"
 openssl = "0.10"
-openssl-sys = "0.9"
 
 # schannel
 tokio-schannel = "0.2"

@@ -45,34 +45,22 @@ let incoming = TlsIncoming::new(tcp, Arc::new(config));
 resolver.update(new_certified_key);
 ```
 
-### openssl: `SSL_CTX_set_cert_cb`
+### openssl: `set_client_hello_callback`
 
-OpenSSL's cert callback fires on **every** handshake regardless of SNI.
-The Rust `openssl` crate does not expose this API, so it requires unsafe
-FFI against `openssl-sys`:
-
-```rust
-unsafe extern "C" {
-    fn SSL_CTX_set_cert_cb(
-        ctx: *mut SSL_CTX,
-        cb: Option<unsafe extern "C" fn(*mut SSL, *mut c_void) -> c_int>,
-        arg: *mut c_void,
-    );
-}
-```
-
-A safe wrapper (`set_cert_cb`) can be written following the same pattern
-as the `openssl` crate's other callback wrappers: leak a `Box<F>` via
-`Box::into_raw`, pass the pointer as the `arg`, and use a monomorphized
-trampoline to cast it back.
+The Rust `openssl` crate exposes `set_client_hello_callback` (requires
+OpenSSL 1.1.1+), which fires on **every** handshake unconditionally —
+the direct equivalent of rustls's `ResolvesServerCert`. The closure is
+stored in the `SSL_CTX` ex_data and cleaned up automatically when the
+context is freed.
 
 ```rust
 let certs = Arc::new(ArcSwap::new(Arc::new(CertKeyPair { cert, key })));
 let cb_certs = certs.clone();
-set_cert_cb(&mut acceptor, move |ssl| {
+acceptor.set_client_hello_callback(move |ssl, _alert| {
     let current = cb_certs.load();
-    ssl.set_certificate(&current.cert).is_ok()
-        && ssl.set_private_key(&current.key).is_ok()
+    ssl.set_certificate(&current.cert)?;
+    ssl.set_private_key(&current.key)?;
+    Ok(ClientHelloResponse::SUCCESS)
 });
 let incoming = TlsIncoming::new(tcp, acceptor.build());
 
@@ -80,17 +68,19 @@ let incoming = TlsIncoming::new(tcp, acceptor.build());
 certs.store(Arc::new(CertKeyPair { cert: new_cert, key: new_key }));
 ```
 
+No unsafe code, no manual lifetime management, no extra dependencies
+beyond `arc-swap`.
+
 Note: `set_certificate` / `set_private_key` at acceptor build time are
-not needed when using `set_cert_cb` — the callback sets them on every
-handshake.
+not needed — the callback sets them on every handshake.
 
-### Other openssl callbacks (not recommended)
+### Other openssl callbacks
 
-| API | Fires without SNI | Notes |
-|-----|-------------------|-------|
-| `SSL_CTX_set_cert_cb` | **Yes** | Best for rotation |
-| `set_servername_callback` | No | SNI-dependent, skipped if client omits SNI |
-| `set_client_hello_cb` | **Yes** | Very early, low-level |
+| API | Fires without SNI | Safe Rust API | Notes |
+|-----|-------------------|---------------|-------|
+| `set_client_hello_callback` | **Yes** | **Yes** (ossl111) | Best for rotation |
+| `SSL_CTX_set_cert_cb` | **Yes** | No (needs unsafe FFI) | Lower-level alternative |
+| `set_servername_callback` | No | **Yes** | SNI-dependent, skipped if client omits SNI |
 
 ### Fallback: `ArcSwap` on the acceptor
 
@@ -104,8 +94,9 @@ uniformly across all backends.
 Tests in `tonic-tls-tests/src/cert_rotation_tests.rs`:
 
 - **`rustls_cert_rotation`** — `ResolvesServerCert` + `ArcSwap<CertifiedKey>`.
-- **`openssl_cert_rotation`** — `SSL_CTX_set_cert_cb` via safe FFI wrapper +
-  `ArcSwap<CertKeyPair>`, with `LeakedCb` guard for cleanup.
+- **`openssl_cert_rotation`** — `set_client_hello_callback` +
+  `ArcSwap<CertKeyPair>`. No unsafe code, no extra dependencies beyond
+  `arc-swap`.
 
 Both verify the full rotation flow:
 1. Server starts with cert1, client trusting cert1 succeeds.

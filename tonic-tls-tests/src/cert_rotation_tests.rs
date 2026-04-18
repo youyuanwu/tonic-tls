@@ -214,121 +214,23 @@ mod rustls_rotation {
 }
 
 // ============================================================
-// OpenSSL cert rotation test using SSL_CTX_set_cert_cb via
-// unsafe FFI. Unlike the SNI callback, the cert callback fires
-// on every handshake regardless of whether the client sends SNI.
+// OpenSSL cert rotation test using set_client_hello_callback.
+// Unlike the SNI callback, the client hello callback fires on
+// every handshake regardless of whether the client sends SNI.
 // ============================================================
 
 mod openssl_rotation {
     use super::*;
     use arc_swap::ArcSwap;
 
-    // ---- Safe wrapper for SSL_CTX_set_cert_cb ----
-
-    unsafe extern "C" {
-        /// `void SSL_CTX_set_cert_cb(SSL_CTX *ctx,
-        ///     int (*cb)(SSL *ssl, void *arg), void *arg);`
-        fn SSL_CTX_set_cert_cb(
-            ctx: *mut openssl_sys::SSL_CTX,
-            cb: Option<
-                unsafe extern "C" fn(
-                    ssl: *mut openssl_sys::SSL,
-                    arg: *mut std::ffi::c_void,
-                ) -> std::ffi::c_int,
-            >,
-            arg: *mut std::ffi::c_void,
-        );
-    }
-
-    /// Extern "C" trampoline — monomorphized per `F`.
-    /// Casts `arg` back to `*const F` and calls the closure.
-    /// Returns 1 on success, 0 to abort the handshake.
-    unsafe extern "C" fn cert_cb_trampoline<F>(
-        ssl: *mut openssl_sys::SSL,
-        arg: *mut std::ffi::c_void,
-    ) -> std::ffi::c_int
-    where
-        F: Fn(&mut openssl::ssl::SslRef) -> bool + 'static + Send + Sync,
-    {
-        unsafe {
-            let callback = &*(arg as *const F);
-            let ssl = &mut *(ssl as *mut openssl::ssl::SslRef);
-            if callback(ssl) { 1 } else { 0 }
-        }
-    }
-
-    /// Safe wrapper: registers a cert callback on an `SslAcceptorBuilder`.
-    ///
-    /// The callback is called on every TLS handshake (regardless of SNI)
-    /// and receives `&mut SslRef`. Return `true` to proceed, `false` to abort.
-    ///
-    /// The closure is leaked via `Box::into_raw` so the pointer stays valid
-    /// for the lifetime of the SSL_CTX. OpenSSL does not provide a free hook
-    /// for cert_cb arg, so the caller must ensure the `SslAcceptor` (and thus
-    /// the SSL_CTX) does not outlive the leaked closure. In practice the
-    /// closure lives until process exit or until the returned `Box` is
-    /// reclaimed by the caller.
-    ///
-    /// Returns the raw pointer so the caller can reclaim it if needed.
-    fn set_cert_cb<F>(acceptor: &mut openssl::ssl::SslAcceptorBuilder, callback: F) -> *mut F
-    where
-        F: Fn(&mut openssl::ssl::SslRef) -> bool + 'static + Send + Sync,
-    {
-        let ptr = Box::into_raw(Box::new(callback));
-        unsafe {
-            use std::ops::Deref;
-            let ctx_ptr = acceptor.deref().as_ptr();
-            SSL_CTX_set_cert_cb(
-                ctx_ptr,
-                Some(cert_cb_trampoline::<F>),
-                ptr as *mut std::ffi::c_void,
-            );
-        }
-        ptr
-    }
-
-    // ---- Shared cert/key state ----
-
     struct CertKeyPair {
         cert: openssl::x509::X509,
         key: openssl::pkey::PKey<openssl::pkey::Private>,
     }
 
-    /// Type-erased guard for a leaked `Box<F>`. Reclaims the allocation on drop.
-    struct LeakedCb {
-        ptr: *mut (),
-        drop_fn: fn(*mut ()),
-    }
-
-    // SAFETY: The leaked closure is Send+Sync (required by set_cert_cb).
-    unsafe impl Send for LeakedCb {}
-    unsafe impl Sync for LeakedCb {}
-
-    impl LeakedCb {
-        fn new<F>(raw: *mut F) -> Self {
-            fn drop_box<F>(ptr: *mut ()) {
-                unsafe {
-                    let _ = Box::from_raw(ptr as *mut F);
-                }
-            }
-            Self {
-                ptr: raw as *mut (),
-                drop_fn: drop_box::<F>,
-            }
-        }
-    }
-
-    impl Drop for LeakedCb {
-        fn drop(&mut self) {
-            (self.drop_fn)(self.ptr);
-        }
-    }
-
-    /// Handle to update the cert/key and clean up the leaked callback.
+    /// Handle to update the cert/key used by the server.
     struct CertReloadHandle {
         certs: Arc<ArcSwap<CertKeyPair>>,
-        /// Leaked closure guard — dropped when this handle is dropped.
-        _cb: LeakedCb,
     }
 
     impl CertReloadHandle {
@@ -341,11 +243,9 @@ mod openssl_rotation {
         }
     }
 
-    // ---- Constructor ----
-
-    /// Build an SslAcceptor with a cert callback (SSL_CTX_set_cert_cb) that
-    /// dynamically loads the current cert/key from shared state on every
-    /// handshake. The acceptor is built once and never reconstructed.
+    /// Build an SslAcceptor with a client hello callback that dynamically
+    /// loads the current cert/key from shared state on every handshake.
+    /// The acceptor is built once and never reconstructed.
     fn create_reloadable_openssl_acceptor(
         cert: &openssl::x509::X509,
         key: &openssl::pkey::PKey<openssl::pkey::Private>,
@@ -364,16 +264,18 @@ mod openssl_rotation {
                 .ok_or(openssl::ssl::AlpnError::NOACK)
         });
 
-        // Register the cert callback — closure captures the ArcSwap.
-        let leaked_ptr = set_cert_cb(&mut acceptor, move |ssl| {
+        // Client hello callback: fires on every handshake, sets cert/key
+        // from shared state. No unsafe FFI needed.
+        acceptor.set_client_hello_callback(move |ssl, _alert| {
             let current = cb_certs.load();
-            ssl.set_certificate(&current.cert).is_ok() && ssl.set_private_key(&current.key).is_ok()
+            ssl.set_certificate(&current.cert)
+                .map_err(|_| openssl::error::ErrorStack::get())?;
+            ssl.set_private_key(&current.key)
+                .map_err(|_| openssl::error::ErrorStack::get())?;
+            Ok(openssl::ssl::ClientHelloResponse::SUCCESS)
         });
 
-        let handle = CertReloadHandle {
-            certs,
-            _cb: LeakedCb::new(leaked_ptr),
-        };
+        let handle = CertReloadHandle { certs };
         (acceptor.build(), handle)
     }
 
@@ -407,9 +309,9 @@ mod openssl_rotation {
         .map_err(tonic_tls::Error::from)
     }
 
-    /// Test cert rotation with openssl using SSL_CTX_set_cert_cb.
+    /// Test cert rotation with openssl using set_client_hello_callback.
     /// The acceptor is built once; cert/key are swapped via ArcSwap
-    /// and picked up by the cert callback on every handshake (no SNI required).
+    /// and picked up by the client hello callback on every handshake.
     ///
     /// 1. Server starts with cert1.
     /// 2. Client trusting cert1 connects successfully.
@@ -422,7 +324,7 @@ mod openssl_rotation {
         let (cert1, key1) = crate::tests::make_test_cert2(vec!["localhost".to_string()]);
         let (cert2, key2) = crate::tests::make_test_cert2(vec!["localhost".to_string()]);
 
-        // Create acceptor with SNI callback; built once, never reconstructed
+        // Create acceptor with client hello callback; built once, never reconstructed
         let (acceptor, reload_handle) = create_reloadable_openssl_acceptor(&cert1, &key1);
 
         let (listener, addr) = crate::tests::create_listener_server().await;
