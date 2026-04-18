@@ -18,6 +18,9 @@ mod ntls_tests;
 #[cfg(test)]
 mod openssl_tests;
 
+#[cfg(test)]
+mod cert_rotation_tests;
+
 #[cfg(all(test, target_os = "windows"))]
 mod schannel_tests;
 
