@@ -1,14 +1,30 @@
 name: build
 
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
+
+env:
+  RUST_MSRV: "1.90.0"
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      rust-msrv: ${{ env.RUST_MSRV }}
+      rust-version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: parse
+        run: |
+          version=$(grep 'channel' rust-toolchain.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: setup
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ windows-latest, ubuntu-latest ]
-        rust: [ 1.90.0, 1.94.0 ]
+        rust: [ '${{ needs.setup.outputs.rust-msrv }}', '${{ needs.setup.outputs.rust-version }}' ]
     steps:
     - uses: actions/checkout@v5
     
