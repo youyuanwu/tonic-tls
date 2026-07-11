@@ -65,7 +65,7 @@ jobs:
       run: cargo +${{ matrix.rust }} llvm-cov report --summary-only --ignore-filename-regex tonic-tls-tests.*
 
     - name: Upload Report to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         files: ./codecov.json
         fail_ci_if_error: true
