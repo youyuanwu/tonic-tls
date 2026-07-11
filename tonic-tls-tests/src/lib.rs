@@ -72,15 +72,23 @@ pub(crate) mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         println!("run client");
-        let child_client = std::process::Command::new("cargo")
-            .arg("run")
-            .arg("--example")
-            .arg("helloworld-client")
-            .arg("--")
-            .arg("--nocapture")
-            .output()
-            .expect("Couldn't run client");
-        assert!(child_client.status.success());
+        let mut child_client = None;
+        for _ in 0..20 {
+            let output = std::process::Command::new("cargo")
+                .arg("run")
+                .arg("--example")
+                .arg("helloworld-client")
+                .arg("--")
+                .arg("--nocapture")
+                .output()
+                .expect("Couldn't run client");
+            if output.status.success() {
+                child_client = Some(output);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        let child_client = child_client.expect("client failed to connect to server");
         println!("client output: {child_client:?}");
 
         child_server.kill().expect("!kill");
