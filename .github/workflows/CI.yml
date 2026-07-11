@@ -21,7 +21,10 @@ jobs:
   build:
     needs: setup
     runs-on: ${{ matrix.os }}
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ windows-latest, ubuntu-latest ]
         rust: [ '${{ needs.setup.outputs.rust-msrv }}', '${{ needs.setup.outputs.rust-version }}' ]
@@ -65,6 +68,9 @@ jobs:
       run: cargo +${{ matrix.rust }} llvm-cov report --summary-only --ignore-filename-regex tonic-tls-tests.*
 
     - name: Upload Report to Codecov
+      # Dependabot (and other) runs cannot access repository Actions secrets,
+      # so CODECOV_TOKEN is empty there. Skip the upload instead of failing.
+      if: env.CODECOV_TOKEN != ''
       uses: codecov/codecov-action@v7
       with:
         files: ./codecov.json
