@@ -22,7 +22,6 @@ jobs:
     needs: setup
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         os: [ windows-latest, ubuntu-latest ]
         rust: [ '${{ needs.setup.outputs.rust-msrv }}', '${{ needs.setup.outputs.rust-version }}' ]
@@ -47,13 +46,6 @@ jobs:
 
     - uses: taiki-e/install-action@cargo-llvm-cov
 
-    # Caches ~/.cargo and target/. On a cache hit, incremental rebuilds of
-    # the workspace and its build scripts are skipped (including the
-    # cmake-based protoc-gen-rust-grpc bootstrap that grpc-protobuf-build
-    # runs on Linux). rust-cache automatically keys on the runner OS,
-    # rustc version, Cargo.lock, and workflow file.
-    - uses: Swatinem/rust-cache@v2
-
     - name: Run cargo check
       run: cargo +${{ matrix.rust }} check
 
@@ -67,10 +59,10 @@ jobs:
       run: cargo +${{ matrix.rust }} test --all -- --nocapture
 
     - name: Run llvm-cov
-      run: cargo +${{ matrix.rust }} llvm-cov --codecov --output-path codecov.json --ignore-filename-regex '(tonic-tls-tests|grpc-tests).*'
+      run: cargo +${{ matrix.rust }} llvm-cov --codecov --output-path codecov.json --ignore-filename-regex tonic-tls-tests.*
 
     - name: Show cov summary
-      run: cargo +${{ matrix.rust }} llvm-cov report --summary-only --ignore-filename-regex '(tonic-tls-tests|grpc-tests).*'
+      run: cargo +${{ matrix.rust }} llvm-cov report --summary-only --ignore-filename-regex tonic-tls-tests.*
 
     - name: Upload Report to Codecov
       uses: codecov/codecov-action@v5
