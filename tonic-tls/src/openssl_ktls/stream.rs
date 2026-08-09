@@ -19,6 +19,11 @@ impl SslStream {
     pub fn new(inner: openssl_ktls::TokioSslStream) -> Self {
         Self { inner }
     }
+
+    /// Get a reference to the underlying TLS stream.
+    pub fn get_ref(&self) -> &openssl_ktls::TokioSslStream {
+        &self.inner
+    }
 }
 
 impl Connected for SslStream {
@@ -75,6 +80,18 @@ impl AsyncWrite for SslStream {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {

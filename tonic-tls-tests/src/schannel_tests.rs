@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 
 use crate::helloworld::{self, HelloReply, HelloRequest};
 
+use futures::StreamExt;
+use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status,
@@ -161,6 +163,15 @@ async fn run_schannel_tonic_server(
     creds: schannel::schannel_cred::SchannelCred,
 ) {
     let incoming = tonic_tls::schannel::TlsIncoming::new(tcp_s, tls_acceptor, creds);
+    let incoming = incoming.map(|result| {
+        if let Ok(stream) = &result {
+            assert_eq!(
+                stream.is_write_vectored(),
+                stream.get_ref().is_write_vectored()
+            );
+        }
+        result
+    });
 
     let greeter = SchannelGreeter {};
     tonic::transport::Server::builder()

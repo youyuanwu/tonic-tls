@@ -1,6 +1,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use crate::helloworld::{self, HelloReply, HelloRequest};
+use futures::StreamExt;
+use tokio::io::AsyncWrite;
 use tokio_native_tls::native_tls;
 use tokio_util::sync::CancellationToken;
 use tonic::{
@@ -88,6 +90,15 @@ async fn run_ntls_tonic_server(
     tls_acceptor: tokio_native_tls::native_tls::TlsAcceptor,
 ) {
     let incoming = tonic_tls::native::TlsIncoming::new(tcp_s, tls_acceptor);
+    let incoming = incoming.map(|result| {
+        if let Ok(stream) = &result {
+            assert_eq!(
+                stream.is_write_vectored(),
+                stream.get_ref().is_write_vectored()
+            );
+        }
+        result
+    });
 
     let greeter = NtlsGreeter {};
     tonic::transport::Server::builder()

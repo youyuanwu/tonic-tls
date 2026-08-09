@@ -19,6 +19,11 @@ impl<S> TlsStream<S> {
     pub fn new(inner: tokio_schannel::TlsStream<S>) -> Self {
         Self { inner }
     }
+
+    /// Get a reference to the underlying TLS stream.
+    pub fn get_ref(&self) -> &tokio_schannel::TlsStream<S> {
+        &self.inner
+    }
 }
 
 impl<S: Connected + AsyncRead + AsyncWrite> Connected for TlsStream<S> {
@@ -55,6 +60,18 @@ where
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {

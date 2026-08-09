@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 
 use crate::helloworld::{self, HelloReply, HelloRequest};
+use futures::StreamExt;
+use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status,
@@ -94,6 +96,15 @@ async fn run_openssl_tonic_server(
     tls_acceptor: openssl::ssl::SslAcceptor,
 ) {
     let incoming = tonic_tls::openssl::TlsIncoming::new(tcp_s, tls_acceptor);
+    let incoming = incoming.map(|result| {
+        if let Ok(stream) = &result {
+            assert_eq!(
+                stream.is_write_vectored(),
+                stream.get_ref().is_write_vectored()
+            );
+        }
+        result
+    });
     let greeter = OpensslGreeter {};
     tonic::transport::Server::builder()
         .add_service(helloworld::greeter_server::GreeterServer::new(greeter))

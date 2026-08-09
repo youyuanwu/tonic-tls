@@ -14,6 +14,11 @@ impl<S> TlsStreamWrapper<S> {
     pub fn new(inner: TlsStream<S>) -> Self {
         Self(inner)
     }
+
+    /// Get a reference to the underlying TLS stream.
+    pub fn get_ref(&self) -> &TlsStream<S> {
+        &self.0
+    }
 }
 
 impl<S> tonic::transport::server::Connected for TlsStreamWrapper<S>
@@ -84,6 +89,18 @@ where
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.0).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.0.is_write_vectored()
     }
 
     fn poll_flush(
