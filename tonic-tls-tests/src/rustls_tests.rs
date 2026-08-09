@@ -1,8 +1,10 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use crate::helloworld::{self, HelloReply, HelloRequest};
+use futures::StreamExt;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+use tokio::io::AsyncWrite;
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status,
@@ -101,6 +103,12 @@ async fn run_rustls_tonic_server(
     tls_acceptor: Arc<tokio_rustls::rustls::ServerConfig>,
 ) {
     let incoming = tonic_tls::rustls::TlsIncoming::new(tcp_s, tls_acceptor);
+    let incoming = incoming.map(|result| {
+        if let Ok(stream) = &result {
+            assert!(stream.is_write_vectored());
+        }
+        result
+    });
 
     let greeter = RustlsGreeter {};
     tonic::transport::Server::builder()
