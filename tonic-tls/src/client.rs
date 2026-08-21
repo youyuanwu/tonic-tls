@@ -12,13 +12,13 @@ use crate::endpoint::TcpOpt;
 
 /// Not intended to be used by applications directly.
 /// To add a new tls backend, implement this and pass it into [connector_inner].
-pub trait TlsConnector<S>: Clone + Send + 'static
+pub trait TlsConnector<S>: Clone + Send + Sync + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream;
     /// Argument for connect.
-    type Arg: Clone + Send;
+    type Arg: Clone + Send + Sync;
     fn connect(
         &self,
         arg: Self::Arg,
@@ -75,8 +75,7 @@ pub(crate) type TlsBoxedService<TS> =
 pub fn connector_inner<T, C, TS>(transport: T, ssl_conn: C, arg: C::Arg) -> TlsBoxedService<TS>
 where
     T: Transport,
-    C: TlsConnector<T::Io, TlsStream = TS> + Sync,
-    C::Arg: Sync,
+    C: TlsConnector<T::Io, TlsStream = TS>,
     TS: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     let svc = tower::service_fn(move |uri: Uri| {
