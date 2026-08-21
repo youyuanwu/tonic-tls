@@ -68,14 +68,15 @@ impl Transport for TcpTransport {
 }
 
 pub(crate) type TlsBoxedService<TS> =
-    tower::util::BoxService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
+    tower::util::BoxCloneSyncService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
 
 /// Not intended to be used by applications directly.
 /// Applications should use the tls backend api, for example [super::openssl::TlsConnector]
 pub fn connector_inner<T, C, TS>(transport: T, ssl_conn: C, arg: C::Arg) -> TlsBoxedService<TS>
 where
-    T: Transport,
-    C: TlsConnector<T::Io, TlsStream = TS>,
+    T: Transport + Sync,
+    C: TlsConnector<T::Io, TlsStream = TS> + Sync,
+    C::Arg: Sync,
     TS: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     let svc = tower::service_fn(move |uri: Uri| {
@@ -88,7 +89,7 @@ where
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }
     });
-    tower::util::BoxService::new(svc)
+    tower::util::BoxCloneSyncService::new(svc)
 }
 
 /// Use the host:port portion of the uri and resolve to an sockaddr.

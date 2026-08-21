@@ -43,9 +43,20 @@ async fn connect_rustls_tonic_channel(
     cert: &CertificateDer<'static>,
     addr: SocketAddr,
 ) -> Result<Channel, tonic_tls::Error> {
+    let url = format!("https://{addr}");
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_rustls_connector(cert, &ep);
+    ep.connect_with_connector(connector)
+        .await
+        .map_err(tonic_tls::Error::from)
+}
+
+fn make_rustls_connector(
+    cert: &CertificateDer<'static>,
+    ep: &tonic::transport::Endpoint,
+) -> tonic_tls::rustls::TlsConnector<tokio::net::TcpStream> {
     use tokio_rustls::rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
 
-    let url = format!("https://{addr}");
     let mut root_cert_store = RootCertStore::empty();
     root_cert_store.add(cert.clone()).unwrap();
     let mut config = ClientConfig::builder()
@@ -54,16 +65,8 @@ async fn connect_rustls_tonic_channel(
     config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
 
     let dnsname = ServerName::try_from("localhost").unwrap();
-
-    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
-    let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
-    ep.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
-        transport,
-        Arc::new(config),
-        dnsname,
-    ))
-    .await
-    .map_err(tonic_tls::Error::from)
+    let transport = tonic_tls::TcpTransport::from_endpoint(ep);
+    tonic_tls::rustls::TlsConnector::new(transport, Arc::new(config), dnsname)
 }
 
 fn make_test_cert_rustls(
@@ -178,6 +181,48 @@ async fn rustls_test() {
     println!("RESPONSE={resp:?}");
 
     // stop server
+    sv_token.cancel();
+    sv_h.await.unwrap();
+}
+
+/// The connector is cloneable, so it can be created once and reused by
+/// multiple tonic endpoints via clones.
+#[tokio::test]
+async fn rustls_connector_clone_test() {
+    let (cert, key) = make_test_cert_rustls(vec!["localhost".to_string()]);
+
+    let (listener, addr) = crate::tests::create_listener_server().await;
+
+    let sv_token = CancellationToken::new();
+    let sv_token_cp = sv_token.clone();
+
+    let acceptor = create_rustls_acceptor(&cert, &key);
+    let sv_h = tokio::spawn(async move {
+        run_rustls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let url = format!("https://{addr}");
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_rustls_connector(&cert, &ep);
+    // clone the connector and use each clone on a separate endpoint.
+    let connector_cp = connector.clone();
+
+    for conn in [connector, connector_cp] {
+        let ch = ep
+            .clone()
+            .connect_with_connector(conn)
+            .await
+            .expect("cannot connect");
+        let mut client = helloworld::greeter_client::GreeterClient::new(ch);
+        let request = tonic::Request::new(helloworld::HelloRequest {
+            name: "Tonic".into(),
+        });
+        let resp = client.say_hello(request).await.unwrap();
+        assert_eq!(resp.into_inner().message, "Hello Tonic!");
+    }
+
     sv_token.cancel();
     sv_h.await.unwrap();
 }
