@@ -65,21 +65,14 @@ async fn connect_ntls_tonic_channel(
     cert: &native_tls::Certificate,
     addr: SocketAddr,
 ) -> Result<Channel, tonic_tls::Error> {
-    let tc = native_tls::TlsConnector::builder()
-        .disable_built_in_roots(true)
-        .add_root_certificate(cert.clone())
-        .request_alpns(&[std::str::from_utf8(tonic_tls::ALPN_H2).unwrap()])
-        .build()
-        .unwrap();
     let url = format!("https://{addr}");
-    let dnsname = "localhost".to_string();
     let ep = tonic::transport::Endpoint::from_shared(url)
         .unwrap()
         .tcp_keepalive(Some(Duration::from_secs(5)))
         .tcp_keepalive_interval(Some(Duration::from_secs(3)))
         .tcp_keepalive_retries(Some(3));
-    let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
-    ep.connect_with_connector(tonic_tls::native::TlsConnector::new(transport, tc, dnsname))
+    let connector = make_ntls_connector(cert, &ep);
+    ep.connect_with_connector(connector)
         .await
         .map_err(tonic_tls::Error::from)
 }
@@ -162,6 +155,62 @@ async fn ntls_test() {
     println!("RESPONSE={resp:?}");
 
     // stop server
+    sv_token.cancel();
+    sv_h.await.unwrap();
+}
+
+fn make_ntls_connector(
+    cert: &native_tls::Certificate,
+    ep: &tonic::transport::Endpoint,
+) -> tonic_tls::native::TlsConnector<tokio::net::TcpStream> {
+    let tc = native_tls::TlsConnector::builder()
+        .disable_built_in_roots(true)
+        .add_root_certificate(cert.clone())
+        .request_alpns(&[std::str::from_utf8(tonic_tls::ALPN_H2).unwrap()])
+        .build()
+        .unwrap();
+    let transport = tonic_tls::TcpTransport::from_endpoint(ep);
+    tonic_tls::native::TlsConnector::new(transport, tc, "localhost".to_string())
+}
+
+/// The connector is cloneable, so it can be created once and reused by
+/// multiple tonic endpoints via clones.
+#[tokio::test]
+async fn ntls_connector_clone_test() {
+    let (cert, key) = make_test_cert_ntls(vec!["localhost".to_string()]);
+
+    let (listener, addr) = crate::tests::create_listener_server().await;
+
+    let sv_token = CancellationToken::new();
+    let sv_token_cp = sv_token.clone();
+
+    let acceptor = create_ntls_acceptor(&key);
+    let sv_h = tokio::spawn(async move {
+        run_ntls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let url = format!("https://{addr}");
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_ntls_connector(&cert, &ep);
+    // clone the connector and use each clone on a separate endpoint.
+    let connector_cp = connector.clone();
+
+    for conn in [connector, connector_cp] {
+        let ch = ep
+            .clone()
+            .connect_with_connector(conn)
+            .await
+            .expect("cannot connect");
+        let mut client = helloworld::greeter_client::GreeterClient::new(ch);
+        let request = tonic::Request::new(helloworld::HelloRequest {
+            name: "Tonic".into(),
+        });
+        let resp = client.say_hello(request).await.unwrap();
+        assert_eq!(resp.into_inner().message, "Hello Tonic!");
+    }
+
     sv_token.cancel();
     sv_h.await.unwrap();
 }

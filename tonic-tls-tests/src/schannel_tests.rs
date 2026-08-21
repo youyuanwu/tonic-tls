@@ -104,10 +104,10 @@ pub fn in_mem_key(
     Ok(context)
 }
 
-async fn connect_schannel_tonic_channel(
+fn make_schannel_connector(
     root: &schannel::cert_context::CertContext,
-    addr: SocketAddr,
-) -> Result<Channel, tonic_tls::Error> {
+    ep: &tonic::transport::Endpoint,
+) -> tonic_tls::schannel::TlsConnector<tokio::net::TcpStream> {
     let mut builder = schannel::tls_stream::Builder::new();
     builder.verify_callback(|ctx| {
         if let Err(e) = ctx.result() {
@@ -124,18 +124,24 @@ async fn connect_schannel_tonic_channel(
     builder.cert_store(cert_store);
     builder.request_application_protocols(&[tonic_tls::ALPN_H2]);
 
-    let url = format!("https://{addr}");
     let creds = schannel::schannel_cred::SchannelCred::builder()
         .acquire(schannel::schannel_cred::Direction::Outbound)
         .unwrap();
-    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
 
-    let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
-    ep.connect_with_connector(tonic_tls::schannel::TlsConnector::new(
-        transport, builder, creds,
-    ))
-    .await
-    .map_err(tonic_tls::Error::from)
+    let transport = tonic_tls::TcpTransport::from_endpoint(ep);
+    tonic_tls::schannel::TlsConnector::new(transport, builder, creds)
+}
+
+async fn connect_schannel_tonic_channel(
+    root: &schannel::cert_context::CertContext,
+    addr: SocketAddr,
+) -> Result<Channel, tonic_tls::Error> {
+    let url = format!("https://{addr}");
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_schannel_connector(root, &ep);
+    ep.connect_with_connector(connector)
+        .await
+        .map_err(tonic_tls::Error::from)
 }
 pub fn create_schannel_acceptor() -> schannel::tls_stream::Builder {
     let mut builder = schannel::tls_stream::Builder::new();
@@ -239,6 +245,52 @@ async fn schannel_test() {
     println!("RESPONSE={resp:?}");
 
     // stop server
+    sv_token.cancel();
+    sv_h.await.unwrap();
+}
+
+/// The connector is cloneable, so it can be created once and reused by
+/// multiple tonic endpoints via clones.
+#[tokio::test]
+async fn schannel_connector_clone_test() {
+    let (cert, key) = make_test_cert_schannel(vec!["localhost".to_string()]);
+
+    let (listener, addr) = crate::tests::create_listener_server().await;
+
+    let sv_token = CancellationToken::new();
+    let sv_token_cp = sv_token.clone();
+
+    let creds = schannel::schannel_cred::SchannelCred::builder()
+        .cert(key.clone())
+        .acquire(schannel::schannel_cred::Direction::Inbound)
+        .unwrap();
+    let acceptor = create_schannel_acceptor();
+    let sv_h = tokio::spawn(async move {
+        run_schannel_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor, creds).await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let url = format!("https://{addr}");
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_schannel_connector(&cert, &ep);
+    // clone the connector and use each clone on a separate endpoint.
+    let connector_cp = connector.clone();
+
+    for conn in [connector, connector_cp] {
+        let ch = ep
+            .clone()
+            .connect_with_connector(conn)
+            .await
+            .expect("cannot connect");
+        let mut client = helloworld::greeter_client::GreeterClient::new(ch);
+        let request = tonic::Request::new(helloworld::HelloRequest {
+            name: "Tonic".into(),
+        });
+        let resp = client.say_hello(request).await.unwrap();
+        assert_eq!(resp.into_inner().message, "Hello Tonic!");
+    }
+
     sv_token.cancel();
     sv_h.await.unwrap();
 }

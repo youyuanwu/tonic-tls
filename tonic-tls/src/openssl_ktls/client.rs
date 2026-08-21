@@ -30,6 +30,11 @@ impl crate::TlsConnector<TcpStream> for OpensslKtlsConnector {
 
 /// tonic client connector to connect to https endpoint at addr using
 /// openssl settings in ssl.
+///
+/// The connector is cloneable, so it can be created once and cloned to be
+/// passed to separate tonic endpoints or other consumers. Clones connect
+/// independently and share the same tls configuration.
+#[derive(Clone)]
 pub struct TlsConnector {
     inner: crate::client::TlsBoxedService<openssl_ktls::TokioSslStream>,
 }

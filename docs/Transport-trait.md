@@ -6,7 +6,7 @@ transport, not just TCP (e.g. Unix sockets, VSOCK, named pipes).
 ## Trait definition
 
 ```rust
-pub trait Transport: Clone + Send + 'static {
+pub trait Transport: Clone + Send + Sync + 'static {
     type Io: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static;
     type Error: Into<crate::Error>;
 

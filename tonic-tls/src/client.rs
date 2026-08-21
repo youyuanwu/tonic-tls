@@ -12,13 +12,13 @@ use crate::endpoint::TcpOpt;
 
 /// Not intended to be used by applications directly.
 /// To add a new tls backend, implement this and pass it into [connector_inner].
-pub trait TlsConnector<S>: Clone + Send + 'static
+pub trait TlsConnector<S>: Clone + Send + Sync + 'static
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     type TlsStream;
     /// Argument for connect.
-    type Arg: Clone + Send;
+    type Arg: Clone + Send + Sync;
     fn connect(
         &self,
         arg: Self::Arg,
@@ -28,7 +28,7 @@ where
 
 /// Trait for abstracting the transport connection step.
 /// Implement this for custom transports (e.g. Unix sockets, VSOCK).
-pub trait Transport: Clone + Send + 'static {
+pub trait Transport: Clone + Send + Sync + 'static {
     /// The connection type produced by this transport.
     type Io: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     /// The error type returned by connect.
@@ -68,7 +68,7 @@ impl Transport for TcpTransport {
 }
 
 pub(crate) type TlsBoxedService<TS> =
-    tower::util::BoxService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
+    tower::util::BoxCloneSyncService<Uri, hyper_util::rt::TokioIo<TS>, crate::Error>;
 
 /// Not intended to be used by applications directly.
 /// Applications should use the tls backend api, for example [super::openssl::TlsConnector]
@@ -88,7 +88,7 @@ where
             Ok::<_, crate::Error>(hyper_util::rt::TokioIo::new(ssl_s))
         }
     });
-    tower::util::BoxService::new(svc)
+    tower::util::BoxCloneSyncService::new(svc)
 }
 
 /// Use the host:port portion of the uri and resolve to an sockaddr.

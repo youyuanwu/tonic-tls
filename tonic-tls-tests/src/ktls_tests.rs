@@ -42,31 +42,13 @@ async fn connect_openssl_ktls_tonic_channel(
     cert: &openssl::x509::X509,
     addr: SocketAddr,
 ) -> Result<Channel, tonic_tls::Error> {
-    let mut connector =
-        openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls()).unwrap();
-    connector.cert_store_mut().add_cert(cert.clone()).unwrap();
-    connector.add_client_ca(cert).unwrap();
-    connector.set_verify_callback(openssl::ssl::SslVerifyMode::PEER, |ok, ctx| {
-        if !ok {
-            let e = ctx.error();
-            println!("verify failed : {e}");
-        }
-        ok
-    });
-    connector
-        .set_alpn_protos(tonic_tls::openssl::ALPN_H2_WIRE)
-        .unwrap();
-    let connector = connector.build();
     // use dns to test resolve
     let url = format!("https://localhost:{}", addr.port());
-    let dnsname = "localhost".to_string();
     let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
-    let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
-    ep.connect_with_connector(tonic_tls::openssl_ktls::TlsConnector::new(
-        transport, connector, dnsname,
-    ))
-    .await
-    .map_err(tonic_tls::Error::from)
+    let connector = make_openssl_ktls_connector(cert, &ep);
+    ep.connect_with_connector(connector)
+        .await
+        .map_err(tonic_tls::Error::from)
 }
 pub fn create_openssl_ktls_acceptor(
     cert: &openssl::x509::X509,
@@ -171,6 +153,71 @@ async fn openssl_ktls_test() {
     println!("RESPONSE={resp:?}");
 
     // stop server
+    sv_token.cancel();
+    sv_h.await.unwrap();
+}
+
+fn make_openssl_ktls_connector(
+    cert: &openssl::x509::X509,
+    ep: &tonic::transport::Endpoint,
+) -> tonic_tls::openssl_ktls::TlsConnector {
+    let mut connector =
+        openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls()).unwrap();
+    connector.cert_store_mut().add_cert(cert.clone()).unwrap();
+    connector.add_client_ca(cert).unwrap();
+    connector.set_verify_callback(openssl::ssl::SslVerifyMode::PEER, |ok, ctx| {
+        if !ok {
+            let e = ctx.error();
+            println!("verify failed : {e}");
+        }
+        ok
+    });
+    connector
+        .set_alpn_protos(tonic_tls::openssl::ALPN_H2_WIRE)
+        .unwrap();
+    let connector = connector.build();
+    let transport = tonic_tls::TcpTransport::from_endpoint(ep);
+    tonic_tls::openssl_ktls::TlsConnector::new(transport, connector, "localhost".to_string())
+}
+
+/// The connector is cloneable, so it can be created once and reused by
+/// multiple tonic endpoints via clones.
+#[tokio::test]
+async fn openssl_ktls_connector_clone_test() {
+    let (cert, key) = crate::tests::make_test_cert2(vec!["localhost".to_string()]);
+
+    let (listener, addr) = crate::tests::create_listener_server().await;
+
+    let sv_token = CancellationToken::new();
+    let sv_token_cp = sv_token.clone();
+
+    let acceptor = create_openssl_ktls_acceptor(&cert, &key);
+    let sv_h = tokio::spawn(async move {
+        run_openssl_ktls_tonic_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let url = format!("https://localhost:{}", addr.port());
+    let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+    let connector = make_openssl_ktls_connector(&cert, &ep);
+    // clone the connector and use each clone on a separate endpoint.
+    let connector_cp = connector.clone();
+
+    for conn in [connector, connector_cp] {
+        let ch = ep
+            .clone()
+            .connect_with_connector(conn)
+            .await
+            .expect("cannot connect");
+        let mut client = helloworld::greeter_client::GreeterClient::new(ch);
+        let request = tonic::Request::new(helloworld::HelloRequest {
+            name: "Tonic".into(),
+        });
+        let resp = client.say_hello(request).await.unwrap();
+        assert_eq!(resp.into_inner().message, "Hello Tonic!");
+    }
+
     sv_token.cancel();
     sv_h.await.unwrap();
 }

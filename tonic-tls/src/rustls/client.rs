@@ -27,8 +27,21 @@ where
 
 /// tonic client connector to connect to https endpoint at addr using
 /// rustls.
+///
+/// The connector is cloneable, so it can be created once and cloned to be
+/// passed to separate tonic endpoints or other consumers. Clones connect
+/// independently and share the same tls configuration.
 pub struct TlsConnector<IO> {
     inner: crate::client::TlsBoxedService<TlsStream<IO>>,
+}
+
+// Manual impl because IO does not need to be Clone.
+impl<IO> Clone for TlsConnector<IO> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
