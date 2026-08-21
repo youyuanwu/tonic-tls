@@ -64,7 +64,7 @@ impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// }
     /// ```
     pub fn new(
-        transport: impl crate::Transport<Io = IO> + Sync,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: Arc<tokio_rustls::rustls::ClientConfig>,
         domain: tokio_rustls::rustls::pki_types::ServerName<'static>,
     ) -> Self {

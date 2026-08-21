@@ -57,7 +57,7 @@ impl TlsConnector {
     /// }
     /// ```
     pub fn new(
-        transport: impl crate::Transport<Io = TcpStream> + Sync,
+        transport: impl crate::Transport<Io = TcpStream>,
         ssl_conn: openssl::ssl::SslConnector,
         domain: String,
     ) -> Self {

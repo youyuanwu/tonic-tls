@@ -60,7 +60,7 @@ impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// }
     /// ```
     pub fn new(
-        transport: impl crate::Transport<Io = IO> + Sync,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: tokio_native_tls::native_tls::TlsConnector,
         domain: String,
     ) -> Self {

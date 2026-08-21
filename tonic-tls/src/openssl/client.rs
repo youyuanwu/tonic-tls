@@ -62,7 +62,7 @@ impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// }
     /// ```
     pub fn new(
-        transport: impl crate::Transport<Io = IO> + Sync,
+        transport: impl crate::Transport<Io = IO>,
         ssl_conn: openssl::ssl::SslConnector,
         domain: String,
     ) -> Self {

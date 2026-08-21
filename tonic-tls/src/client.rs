@@ -28,7 +28,7 @@ where
 
 /// Trait for abstracting the transport connection step.
 /// Implement this for custom transports (e.g. Unix sockets, VSOCK).
-pub trait Transport: Clone + Send + 'static {
+pub trait Transport: Clone + Send + Sync + 'static {
     /// The connection type produced by this transport.
     type Io: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     /// The error type returned by connect.
@@ -74,7 +74,7 @@ pub(crate) type TlsBoxedService<TS> =
 /// Applications should use the tls backend api, for example [super::openssl::TlsConnector]
 pub fn connector_inner<T, C, TS>(transport: T, ssl_conn: C, arg: C::Arg) -> TlsBoxedService<TS>
 where
-    T: Transport + Sync,
+    T: Transport,
     C: TlsConnector<T::Io, TlsStream = TS> + Sync,
     C::Arg: Sync,
     TS: AsyncRead + AsyncWrite + Send + Unpin + 'static,

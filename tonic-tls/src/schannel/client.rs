@@ -71,7 +71,7 @@ impl<IO: AsyncRead + AsyncWrite + Send + Unpin + 'static> TlsConnector<IO> {
     /// }
     /// ```
     pub fn new(
-        transport: impl crate::Transport<Io = IO> + Sync,
+        transport: impl crate::Transport<Io = IO>,
         builder: schannel::tls_stream::Builder,
         cred: schannel::schannel_cred::SchannelCred,
     ) -> Self {
