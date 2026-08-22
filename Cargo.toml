@@ -15,6 +15,7 @@ tonic = "0.14"
 tower = "0.5"
 hyper = "1"
 hyper-util = "0.1"
+http = "1"
 tracing = "0.1"
 socket2 = "0.6"
 
@@ -42,3 +43,9 @@ native-tls = { version = "0.2", features = ["alpn"] }
 tonic-prost-build = "0.14"
 tonic-prost = "0.14"
 arc-swap = "1"
+
+# xds interop testing. These point at a local checkout of
+# https://github.com/grpc/grpc-rust since the crates are not released yet.
+tonic-xds = { path = "../grpc-rust/tonic-xds", default-features = false }
+xds-test-util = { path = "../grpc-rust/xds-test-util" }
+envoy-types = "0.7"

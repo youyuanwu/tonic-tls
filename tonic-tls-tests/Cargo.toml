@@ -34,6 +34,11 @@ tokio-schannel.workspace = true
 schannel.workspace = true
 openssl-ktls.workspace = true
 arc-swap.workspace = true
+tonic-xds.workspace = true
+xds-test-util.workspace = true
+envoy-types.workspace = true
+tower.workspace = true
+http.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
