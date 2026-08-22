@@ -38,6 +38,7 @@ tonic-xds.workspace = true
 xds-test-util.workspace = true
 envoy-types.workspace = true
 tower.workspace = true
+hyper.workspace = true
 http.workspace = true
 
 [build-dependencies]

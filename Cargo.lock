@@ -1860,6 +1860,7 @@ dependencies = [
  "envoy-types",
  "futures",
  "http",
+ "hyper",
  "native-tls",
  "openssl",
  "openssl-ktls",
