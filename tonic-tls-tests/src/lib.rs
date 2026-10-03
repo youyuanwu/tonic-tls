@@ -1,5 +1,4 @@
 pub mod openssl_gen;
-#[allow(clippy::double_must_use)]
 pub mod helloworld {
     tonic::include_proto!("helloworld");
 }
