@@ -72,7 +72,7 @@ pub(crate) mod tests {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         println!("run client");
-        let mut child_client = None;
+        let mut client_output = None;
         for _ in 0..20 {
             let output = std::process::Command::new("cargo")
                 .arg("run")
@@ -82,18 +82,30 @@ pub(crate) mod tests {
                 .arg("--nocapture")
                 .output()
                 .expect("Couldn't run client");
-            if output.status.success() {
-                child_client = Some(output);
+            let succeeded = output.status.success();
+            client_output = Some(output);
+            if succeeded {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        let child_client = child_client.expect("client failed to connect to server");
-        println!("client output: {child_client:?}");
 
-        child_server.kill().expect("!kill");
+        if child_server.try_wait().unwrap().is_none() {
+            child_server.kill().expect("Couldn't stop server");
+        }
         let server_out = child_server.wait_with_output().unwrap();
         // server kill may exit with code 1.
         println!("server output: {server_out:?}");
+
+        let client_output = client_output.expect("client was not run");
+        assert!(
+            client_output.status.success(),
+            "client failed to connect to server\nclient stdout: {}\nclient stderr: {}\nserver stdout: {}\nserver stderr: {}",
+            String::from_utf8_lossy(&client_output.stdout),
+            String::from_utf8_lossy(&client_output.stderr),
+            String::from_utf8_lossy(&server_out.stdout),
+            String::from_utf8_lossy(&server_out.stderr),
+        );
+        println!("client output: {client_output:?}");
     }
 }
