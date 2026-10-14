@@ -1549,6 +1549,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "schannel",
+ "tempfile",
  "tokio",
  "tokio-native-tls",
  "tokio-rustls",
@@ -1559,6 +1560,22 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tonic-tls",
+ "tonic-tls-xds",
+]
+
+[[package]]
+name = "tonic-tls-xds"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "hyper-util",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tonic",
+ "tonic-tls",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

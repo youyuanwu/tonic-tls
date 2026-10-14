@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
- "tonic-tls", "tonic-tls-tests"
+ "tonic-tls", "tonic-tls-tests", "tonic-tls-xds"
 ]
 
 [workspace.dependencies]
 tonic-tls = { path = "tonic-tls" , default-features = false, features = ["openssl-ktls", "native", "rustls", "openssl", "schannel"] }
+tonic-tls-xds = { path = "tonic-tls-xds", default-features = false }
 
 tokio = { version ="1", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false }
@@ -42,3 +43,4 @@ native-tls = { version = "0.2", features = ["alpn"] }
 tonic-prost-build = "0.14"
 tonic-prost = "0.14"
 arc-swap = "1"
+tempfile = "3"
