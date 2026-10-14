@@ -232,7 +232,8 @@ Client integration tests live in the shared test crate:
 
 - **`rustls_client_identity_rotates_on_channel_reconnect`** verifies the actual
   client certificate observed by an mTLS server before and after rotation,
-  reusing the same tonic channel. Only this test forces connection retirement.
+  reusing the same tonic channel. It explicitly shuts down the first accepted
+  socket after publishing the update; replacement connections are not aged out.
 - **`rustls_client_file_watcher_rotates_identity`** updates PEM files and verifies
   initial invalid material is rejected by connector construction, a half-applied
   update fails new connections without disrupting existing ones, and a valid

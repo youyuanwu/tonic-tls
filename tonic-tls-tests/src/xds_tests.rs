@@ -5,15 +5,20 @@ use crate::{
     tests::{create_listener_server, make_test_cert},
 };
 use arc_swap::ArcSwap;
+use futures::Stream;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     server::WebPkiClientVerifier,
 };
 use std::{
+    net::{Shutdown, TcpStream},
+    pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
+    task::{Context, Poll},
     time::Duration,
 };
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Endpoint, server::TcpConnectInfo};
 use tonic::{
@@ -43,6 +48,36 @@ impl CertificateProvider for TestProvider {
         }
         Ok(self.data.load_full())
     }
+}
+
+struct TestIncoming {
+    inner: TcpIncoming,
+    first_connection: Option<oneshot::Sender<TcpStream>>,
+}
+
+impl Stream for TestIncoming {
+    type Item = Result<tokio::net::TcpStream, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let next = std::task::ready!(Pin::new(&mut self.inner).poll_next(cx));
+        Poll::Ready(next.map(|stream| {
+            let stream = stream?;
+            let Some(sender) = self.first_connection.take() else {
+                return Ok(stream);
+            };
+            // Both handles refer to the same socket, allowing a test-triggered shutdown.
+            let stream = stream.into_std()?;
+            sender
+                .send(stream.try_clone()?)
+                .expect("test must receive the first accepted connection");
+            tokio::net::TcpStream::from_std(stream)
+        }))
+    }
+}
+
+impl tonic_tls::Incoming for TestIncoming {
+    type Io = tokio::net::TcpStream;
+    type Error = std::io::Error;
 }
 
 struct PeerGreeter {
@@ -110,7 +145,7 @@ async fn start_server(
     cert: &rcgen::Certificate,
     key: &rcgen::KeyPair,
     clients: &[&rcgen::Certificate],
-    connection_age: Option<Duration>,
+    first_connection: Option<oneshot::Sender<TcpStream>>,
 ) -> (Endpoint, CancellationToken, tokio::task::JoinHandle<()>) {
     let crypto = Arc::new(rustls::crypto::ring::default_provider());
     let verifier =
@@ -134,13 +169,14 @@ async fn start_server(
     let shutdown = CancellationToken::new();
     let signal = shutdown.clone();
     let task = tokio::spawn(async move {
-        let incoming =
-            tonic_tls::rustls::TlsIncoming::new(TcpIncoming::from(listener), Arc::new(config));
-        let mut server = tonic::transport::Server::builder();
-        if let Some(age) = connection_age {
-            server = server.max_connection_age(age).max_connection_age_grace(age);
-        }
-        server
+        let incoming = tonic_tls::rustls::TlsIncoming::new(
+            TestIncoming {
+                inner: TcpIncoming::from(listener),
+                first_connection,
+            },
+            Arc::new(config),
+        );
+        tonic::transport::Server::builder()
             .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
             .serve_with_incoming_shutdown(incoming, signal.cancelled_owned())
             .await
@@ -187,11 +223,12 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (first, first_key) = make_test_cert(vec!["client-1".into()]);
     let (second, second_key) = make_test_cert(vec!["client-2".into()]);
+    let (first_connection_tx, first_connection_rx) = oneshot::channel();
     let (endpoint, shutdown, task) = start_server(
         &server,
         &server_key,
         &[&first, &second],
-        Some(Duration::from_millis(100)),
+        Some(first_connection_tx),
     )
     .await;
     let provider = TestProvider::new(CertificateData::IdentityOnly {
@@ -201,20 +238,28 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
     let channel = endpoint.connect_with_connector(connector).await.unwrap();
     let mut client = helloworld::greeter_client::GreeterClient::new(channel);
     assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
+    let first_connection = first_connection_rx.await.unwrap();
 
     provider.data.store(Arc::new(CertificateData::IdentityOnly {
         identity: identity(&second, &second_key),
     }));
 
-    // The server ages out the connection. Reuse the original channel, not
-    // a new endpoint channel, to exercise tonic's internal reconnect path.
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Close only the authenticated first connection after publishing the update.
+    // Reuse the original channel; replacement connections are never aged out.
+    first_connection.shutdown(Shutdown::Both).unwrap();
+    drop(first_connection);
+    let mut attempts = 0;
+    let mut last_error = None;
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
+            attempts += 1;
             match peer_identity(&mut client).await {
-                Ok(peer) if peer == "1" => break,
-                Ok(peer) => assert_eq!(peer, "0"),
+                Ok(peer) => {
+                    assert_eq!(peer, "1");
+                    break;
+                }
                 Err(status) => {
-                    // Connection retirement can produce transport-sourced status codes.
+                    // The first RPC can race with tonic noticing the closed connection.
                     assert!(
                         status.code() == tonic::Code::Unavailable
                             || (matches!(
@@ -223,13 +268,17 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
                             ) && std::error::Error::source(&status).is_some()),
                         "unexpected reconnect error: {status:?}",
                     );
+                    last_error = Some(status);
+                    tokio::task::yield_now().await;
                 }
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .expect("same channel did not reconnect with the rotated identity");
+    .await;
+    assert!(
+        result.is_ok(),
+        "same channel did not reconnect after {attempts} attempts; last error: {last_error:?}",
+    );
     drop(client);
     shutdown.cancel();
     task.await.unwrap();
