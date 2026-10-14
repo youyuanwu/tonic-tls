@@ -1,13 +1,16 @@
 # Certificate Rotation
 
-## Problem
+Client certificate providers, reloadable connectors, and file watching are
+documented in [tonic-tls-xds](../tonic-tls-xds/README.md).
+
+## Server certificate rotation
 
 TLS certificates expire and need to be rotated without restarting the server.
 `TlsIncoming::new()` captures the acceptor once at construction time and
 clones it per connection — there is no built-in way to swap in a new
 certificate after the server starts.
 
-## Approach
+### Approach
 
 Both rustls and openssl provide per-handshake callbacks that fire
 unconditionally and allow setting the cert/key dynamically. This requires
@@ -98,7 +101,7 @@ Tests in `tonic-tls-tests/src/cert_rotation_tests.rs`:
   `ArcSwap<CertKeyPair>`. No unsafe code, no extra dependencies beyond
   `arc-swap`.
 
-Both verify the full rotation flow:
+Both server tests verify the full rotation flow:
 1. Server starts with cert1, client trusting cert1 succeeds.
 2. Server rotates to cert2 at runtime.
 3. Client trusting cert1 fails (cert mismatch).

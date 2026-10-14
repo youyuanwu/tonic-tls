@@ -50,19 +50,22 @@ jobs:
     - uses: taiki-e/install-action@cargo-llvm-cov
 
     - name: Run cargo check
-      run: cargo +${{ matrix.rust }} check --locked
+      run: cargo +${{ matrix.rust }} check --locked --workspace --all-features
+
+    - name: Check backend-neutral certificate APIs
+      run: cargo +${{ matrix.rust }} check --locked -p tonic-tls-xds --no-default-features
 
     - name: Run cargo fmt
       run: cargo +${{ matrix.rust }} fmt --all -- --check
     
     - name: Run cargo clippy
-      run: cargo +${{ matrix.rust }} clippy --locked --all-targets -- -D warnings
+      run: cargo +${{ matrix.rust }} clippy --locked --workspace --all-features --all-targets -- -D warnings
     
     - name: Run cargo test
-      run: cargo +${{ matrix.rust }} test --locked --all -- --nocapture
+      run: cargo +${{ matrix.rust }} test --locked --all --all-features -- --nocapture
 
     - name: Run llvm-cov
-      run: cargo +${{ matrix.rust }} llvm-cov --locked --codecov --output-path codecov.json --ignore-filename-regex tonic-tls-tests.*
+      run: cargo +${{ matrix.rust }} llvm-cov --locked --all-features --codecov --output-path codecov.json --ignore-filename-regex tonic-tls-tests.*
 
     - name: Show cov summary
       run: cargo +${{ matrix.rust }} llvm-cov report --summary-only --ignore-filename-regex tonic-tls-tests.*
