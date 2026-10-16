@@ -112,14 +112,18 @@ fn identity(cert: &rcgen::Certificate, key: &rcgen::KeyPair) -> Identity {
     Identity::from_pem(cert.pem(), key.serialize_pem())
 }
 
-async fn wait_for_identity(provider: &dyn CertificateProvider, expected: &Identity) {
+async fn wait_for_snapshot(
+    provider: &dyn CertificateProvider,
+    description: &str,
+    predicate: impl Fn(&CertificateData) -> bool,
+) {
     tokio::time::timeout(Duration::from_secs(5), async {
-        while provider.snapshot().unwrap().identity() != Some(expected) {
+        while !predicate(&provider.snapshot().unwrap()) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("file watcher did not publish the expected identity");
+    .unwrap_or_else(|_| panic!("file watcher did not publish {description}"));
 }
 
 fn roots(certs: &[&rcgen::Certificate]) -> RootCertStore {
@@ -218,44 +222,18 @@ async fn peer_identity(
         .message)
 }
 
-#[tokio::test]
-async fn rustls_client_identity_rotates_on_channel_reconnect() {
-    let (server, server_key) = make_test_cert(vec!["localhost".into()]);
-    let (first, first_key) = make_test_cert(vec!["client-1".into()]);
-    let (second, second_key) = make_test_cert(vec!["client-2".into()]);
-    let (first_connection_tx, first_connection_rx) = oneshot::channel();
-    let (endpoint, shutdown, task) = start_server(
-        &server,
-        &server_key,
-        &[&first, &second],
-        Some(first_connection_tx),
-    )
-    .await;
-    let provider = TestProvider::new(CertificateData::IdentityOnly {
-        identity: identity(&first, &first_key),
-    });
-    let connector = connector(&endpoint, base_config(&[&server]), provider.clone());
-    let channel = endpoint.connect_with_connector(connector).await.unwrap();
-    let mut client = helloworld::greeter_client::GreeterClient::new(channel);
-    assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
-    let first_connection = first_connection_rx.await.unwrap();
-
-    provider.data.store(Arc::new(CertificateData::IdentityOnly {
-        identity: identity(&second, &second_key),
-    }));
-
-    // Close only the authenticated first connection after publishing the update.
-    // Reuse the original channel; replacement connections are never aged out.
-    first_connection.shutdown(Shutdown::Both).unwrap();
-    drop(first_connection);
+async fn await_peer_identity(
+    client: &mut helloworld::greeter_client::GreeterClient<Channel>,
+    expected: &str,
+) {
     let mut attempts = 0;
     let mut last_error = None;
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             attempts += 1;
-            match peer_identity(&mut client).await {
+            match peer_identity(client).await {
                 Ok(peer) => {
-                    assert_eq!(peer, "1");
+                    assert_eq!(peer, expected);
                     break;
                 }
                 Err(status) => {
@@ -269,7 +247,7 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
                         "unexpected reconnect error: {status:?}",
                     );
                     last_error = Some(status);
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
         }
@@ -277,8 +255,41 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
     .await;
     assert!(
         result.is_ok(),
-        "same channel did not reconnect after {attempts} attempts; last error: {last_error:?}",
+        "same channel did not reconnect with identity {expected} after {attempts} attempts; last error: {last_error:?}",
     );
+}
+
+#[tokio::test]
+async fn rustls_client_identity_rotates_on_channel_reconnect() {
+    let (server, server_key) = make_test_cert(vec!["localhost".into()]);
+    let (first, first_key) = make_test_cert(vec!["client-1".into()]);
+    let (second, second_key) = make_test_cert(vec!["client-2".into()]);
+    let (first_connection_tx, first_connection_rx) = oneshot::channel();
+    let (endpoint, shutdown, task) = start_server(
+        &server,
+        &server_key,
+        &[&first, &second],
+        Some(first_connection_tx),
+    )
+    .await;
+    let provider = TestProvider::new(
+        CertificateData::new(None, Some(identity(&first, &first_key)), None).unwrap(),
+    );
+    let connector = connector(&endpoint, base_config(&[&server]), provider.clone());
+    let channel = endpoint.connect_with_connector(connector).await.unwrap();
+    let mut client = helloworld::greeter_client::GreeterClient::new(channel);
+    assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
+    let first_connection = first_connection_rx.await.unwrap();
+
+    provider.data.store(Arc::new(
+        CertificateData::new(None, Some(identity(&second, &second_key)), None).unwrap(),
+    ));
+
+    // Close only the authenticated first connection after publishing the update.
+    // Reuse the original channel; replacement connections are never aged out.
+    first_connection.shutdown(Shutdown::Both).unwrap();
+    drop(first_connection);
+    await_peer_identity(&mut client, "1").await;
     drop(client);
     shutdown.cancel();
     task.await.unwrap();
@@ -325,7 +336,11 @@ async fn rustls_client_file_watcher_rotates_identity() {
     ));
 
     std::fs::write(&cert_path, first.pem()).unwrap();
-    wait_for_identity(provider.as_ref(), &identity(&first, &first_key)).await;
+    let expected = identity(&first, &first_key);
+    wait_for_snapshot(provider.as_ref(), "the initial identity", |data| {
+        data.identity() == Some(&expected)
+    })
+    .await;
     let connector = tonic_tls_xds::ReloadableTlsConnector::new(
         tonic_tls::TcpTransport::from_endpoint(&endpoint),
         provider.clone(),
@@ -341,7 +356,11 @@ async fn rustls_client_file_watcher_rotates_identity() {
 
     // A half-applied update is published, but cannot fall back to the cached pair.
     std::fs::write(&cert_path, second.pem()).unwrap();
-    wait_for_identity(provider.as_ref(), &identity(&second, &first_key)).await;
+    let expected = identity(&second, &first_key);
+    wait_for_snapshot(provider.as_ref(), "the half-updated identity", |data| {
+        data.identity() == Some(&expected)
+    })
+    .await;
     assert!(
         endpoint
             .connect_with_connector(connector.clone())
@@ -353,7 +372,11 @@ async fn rustls_client_file_watcher_rotates_identity() {
 
     // Wait for both files, then confirm the actual peer identity after recovery.
     std::fs::write(&key_path, second_key.serialize_pem()).unwrap();
-    wait_for_identity(provider.as_ref(), &identity(&second, &second_key)).await;
+    let expected = identity(&second, &second_key);
+    wait_for_snapshot(provider.as_ref(), "the rotated identity", |data| {
+        data.identity() == Some(&expected)
+    })
+    .await;
     let channel = endpoint.connect_with_connector(connector).await.unwrap();
     let mut client = helloworld::greeter_client::GreeterClient::new(channel);
     assert_eq!(peer_identity(&mut client).await.unwrap(), "1");
@@ -381,9 +404,9 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
     )
     .unwrap();
     base.client_auth_cert_resolver = Arc::new(rustls::sign::SingleCertAndKey::from(key));
-    let provider = TestProvider::new(CertificateData::RootsOnly {
-        roots: server1.pem().into_bytes(),
-    });
+    let provider = TestProvider::new(
+        CertificateData::new(Some(server1.pem().into_bytes()), None, None).unwrap(),
+    );
     let connector = connector(&endpoint1, base, provider.clone());
 
     let channel = endpoint1
@@ -400,9 +423,9 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
             .is_err()
     );
 
-    provider.data.store(Arc::new(CertificateData::RootsOnly {
-        roots: server2.pem().into_bytes(),
-    }));
+    provider.data.store(Arc::new(
+        CertificateData::new(Some(server2.pem().into_bytes()), None, None).unwrap(),
+    ));
     let channel = endpoint2
         .connect_with_connector(connector.clone())
         .await
@@ -424,10 +447,14 @@ async fn rustls_client_provider_errors_do_not_fall_back_to_cached_credentials() 
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint, shutdown, task) =
         start_server(&server, &server_key, &[&client_cert], None).await;
-    let provider = TestProvider::new(CertificateData::Both {
-        roots: server.pem().into_bytes(),
-        identity: identity(&client_cert, &client_key),
-    });
+    let provider = TestProvider::new(
+        CertificateData::new(
+            Some(server.pem().into_bytes()),
+            Some(identity(&client_cert, &client_key)),
+            None,
+        )
+        .unwrap(),
+    );
     let good = provider.data.load_full();
     let connector = connector(&endpoint, base_config(&[&server]), provider.clone());
     let channel = endpoint
@@ -447,9 +474,14 @@ async fn rustls_client_provider_errors_do_not_fall_back_to_cached_credentials() 
     );
     provider.fail.store(false, Ordering::Relaxed);
 
-    provider.data.store(Arc::new(CertificateData::IdentityOnly {
-        identity: Identity::from_pem(client_cert.pem(), b"not a key"),
-    }));
+    provider.data.store(Arc::new(
+        CertificateData::new(
+            None,
+            Some(Identity::from_pem(client_cert.pem(), b"not a key")),
+            None,
+        )
+        .unwrap(),
+    ));
     assert!(
         endpoint
             .connect_with_connector(connector.clone())
@@ -483,37 +515,45 @@ fn rustls_client_connector_rejects_invalid_material_at_construction() {
     for (name, data) in [
         (
             "empty certificate chain",
-            CertificateData::IdentityOnly {
-                identity: Identity::from_pem(b"", key.serialize_pem()),
-            },
+            CertificateData::new(
+                None,
+                Some(Identity::from_pem(b"", key.serialize_pem())),
+                None,
+            )
+            .unwrap(),
         ),
         (
             "mismatched certificate and key",
-            CertificateData::IdentityOnly {
-                identity: identity(&cert, &wrong_key),
-            },
+            CertificateData::new(None, Some(identity(&cert, &wrong_key)), None).unwrap(),
         ),
         (
             "malformed certificate",
-            CertificateData::IdentityOnly {
-                identity: Identity::from_pem(b"not a certificate", key.serialize_pem()),
-            },
+            CertificateData::new(
+                None,
+                Some(Identity::from_pem(
+                    b"not a certificate",
+                    key.serialize_pem(),
+                )),
+                None,
+            )
+            .unwrap(),
         ),
         (
             "malformed private key",
-            CertificateData::IdentityOnly {
-                identity: Identity::from_pem(cert.pem(), b"not a key"),
-            },
+            CertificateData::new(
+                None,
+                Some(Identity::from_pem(cert.pem(), b"not a key")),
+                None,
+            )
+            .unwrap(),
         ),
         (
             "empty roots",
-            CertificateData::RootsOnly { roots: Vec::new() },
+            CertificateData::new(Some(Vec::new()), None, None).unwrap(),
         ),
         (
             "malformed roots",
-            CertificateData::RootsOnly {
-                roots: b"not a CA certificate".to_vec(),
-            },
+            CertificateData::new(Some(b"not a CA certificate".to_vec()), None, None).unwrap(),
         ),
     ] {
         let result = tonic_tls_xds::ReloadableTlsConnector::new(
@@ -571,9 +611,12 @@ fn rustls_client_factory_rejects_empty_chain_with_unknown_key_consistency() {
         "localhost".try_into().unwrap(),
     );
     let key = rcgen::KeyPair::generate().unwrap();
-    let data = CertificateData::IdentityOnly {
-        identity: Identity::from_pem(b"", key.serialize_pem()),
-    };
+    let data = CertificateData::new(
+        None,
+        Some(Identity::from_pem(b"", key.serialize_pem())),
+        None,
+    )
+    .unwrap();
     let error = tonic_tls_xds::TlsConnectorFactory::<tokio::io::DuplexStream>::build_connector(
         &factory, &data,
     )
@@ -584,3 +627,5 @@ fn rustls_client_factory_rejects_empty_chain_with_unknown_key_consistency() {
         Some(rustls::Error::NoCertificatesPresented),
     ));
 }
+
+mod crl_tests;

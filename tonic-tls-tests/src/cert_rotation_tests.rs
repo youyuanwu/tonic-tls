@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use crate::helloworld::{self, HelloReply, HelloRequest};
 use tokio_util::sync::CancellationToken;
@@ -20,6 +20,15 @@ impl helloworld::greeter_server::Greeter for RotationGreeter {
         };
         Ok(Response::new(reply))
     }
+}
+
+async fn assert_hello(channel: Channel, name: &str) {
+    let mut client = helloworld::greeter_client::GreeterClient::new(channel);
+    let response = client
+        .say_hello(Request::new(HelloRequest { name: name.into() }))
+        .await
+        .unwrap();
+    assert_eq!(response.into_inner().message, format!("Hello {name}!"));
 }
 
 // ============================================================
@@ -112,7 +121,10 @@ mod rustls_rotation {
 
         let dnsname = ServerName::try_from("localhost").unwrap();
 
-        let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+        let ep = tonic::transport::Endpoint::from_shared(url)
+            .unwrap()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(5));
         let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
         ep.connect_with_connector(tonic_tls::rustls::TlsConnector::new(
             transport,
@@ -165,22 +177,11 @@ mod rustls_rotation {
             run_server(sv_token_cp, TcpIncoming::from(listener), acceptor).await
         });
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
         // Step 1: Client trusting cert1 should succeed
-        {
-            let ch = connect_rustls_channel(&cert1, addr)
-                .await
-                .expect("cert1 client should connect");
-            let mut client = helloworld::greeter_client::GreeterClient::new(ch);
-            let resp = client
-                .say_hello(Request::new(HelloRequest {
-                    name: "before rotation".into(),
-                }))
-                .await
-                .unwrap();
-            println!("Before rotation: {resp:?}");
-        }
+        let channel = connect_rustls_channel(&cert1, addr)
+            .await
+            .expect("cert1 client should connect");
+        assert_hello(channel, "before rotation").await;
 
         // Step 2: Rotate server cert to cert2
         resolver.update(ck2);
@@ -194,19 +195,10 @@ mod rustls_rotation {
         }
 
         // Step 4: Client trusting cert2 should succeed
-        {
-            let ch = connect_rustls_channel(&cert2, addr)
-                .await
-                .expect("cert2 client should connect after rotation");
-            let mut client = helloworld::greeter_client::GreeterClient::new(ch);
-            let resp = client
-                .say_hello(Request::new(HelloRequest {
-                    name: "after rotation".into(),
-                }))
-                .await
-                .unwrap();
-            println!("After rotation: {resp:?}");
-        }
+        let channel = connect_rustls_channel(&cert2, addr)
+            .await
+            .expect("cert2 client should connect after rotation");
+        assert_hello(channel, "after rotation").await;
 
         sv_token.cancel();
         sv_h.await.unwrap();
@@ -300,7 +292,10 @@ mod openssl_rotation {
 
         let url = format!("https://localhost:{}", addr.port());
         let dnsname = "localhost".to_string();
-        let ep = tonic::transport::Endpoint::from_shared(url).unwrap();
+        let ep = tonic::transport::Endpoint::from_shared(url)
+            .unwrap()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(5));
         let transport = tonic_tls::TcpTransport::from_endpoint(&ep);
         ep.connect_with_connector(tonic_tls::openssl::TlsConnector::new(
             transport, connector, dnsname,
@@ -347,22 +342,11 @@ mod openssl_rotation {
                 .unwrap();
         });
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
         // Step 1: Client trusting cert1 should succeed
-        {
-            let ch = connect_openssl_channel(&cert1, addr)
-                .await
-                .expect("cert1 client should connect");
-            let mut client = helloworld::greeter_client::GreeterClient::new(ch);
-            let resp = client
-                .say_hello(Request::new(HelloRequest {
-                    name: "before rotation".into(),
-                }))
-                .await
-                .unwrap();
-            println!("Before rotation: {resp:?}");
-        }
+        let channel = connect_openssl_channel(&cert1, addr)
+            .await
+            .expect("cert1 client should connect");
+        assert_hello(channel, "before rotation").await;
 
         // Step 2: Rotate cert/key — no acceptor reconstruction
         reload_handle.reload(cert2.clone(), key2);
@@ -376,19 +360,10 @@ mod openssl_rotation {
         }
 
         // Step 4: Client trusting cert2 should succeed
-        {
-            let ch = connect_openssl_channel(&cert2, addr)
-                .await
-                .expect("cert2 client should connect after rotation");
-            let mut client = helloworld::greeter_client::GreeterClient::new(ch);
-            let resp = client
-                .say_hello(Request::new(HelloRequest {
-                    name: "after rotation".into(),
-                }))
-                .await
-                .unwrap();
-            println!("After rotation: {resp:?}");
-        }
+        let channel = connect_openssl_channel(&cert2, addr)
+            .await
+            .expect("cert2 client should connect after rotation");
+        assert_hello(channel, "after rotation").await;
 
         sv_token.cancel();
         sv_h.await.unwrap();
