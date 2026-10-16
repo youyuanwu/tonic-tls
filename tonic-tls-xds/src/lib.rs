@@ -1,6 +1,6 @@
 //! Certificate providers and reloadable TLS connectors built on `tonic-tls`.
 //!
-//! [`CertificateProvider`] supplies backend-neutral PEM snapshots.
+//! [`CertificateProvider`] supplies backend-neutral certificate and CRL PEM snapshots.
 //! [`ReloadableTlsConnector`] validates and caches connector/argument pairs using
 //! a [`TlsConnectorFactory`], refreshing them for new TLS handshakes.
 //! [`FileWatcherProvider`] polls PEM files and publishes changed snapshots without
@@ -11,9 +11,9 @@
 //! This crate does not implement the xDS discovery protocol.
 
 mod cert_provider;
-pub use cert_provider::{CertificateData, CertificateProvider, Identity};
+pub use cert_provider::{CertificateData, CertificateProvider, CrlSelection, Identity};
 mod file_watcher;
-pub use file_watcher::{FileWatcherConfig, FileWatcherProvider};
+pub use file_watcher::{CrlSource, FileWatcherConfig, FileWatcherProvider};
 mod reloadable_tls_connector;
 pub use reloadable_tls_connector::{ConnectorPair, ReloadableTlsConnector, TlsConnectorFactory};
 

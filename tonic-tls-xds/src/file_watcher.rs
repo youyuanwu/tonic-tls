@@ -4,12 +4,89 @@ use std::{
     time::Duration,
 };
 
-use crate::{CertificateData, CertificateProvider, Identity};
+use crate::{
+    CertificateData, CertificateProvider, CrlSelection, Identity, cert_provider::PemBytes,
+};
+
+/// A source of raw PEM CRL bundles for [`FileWatcherProvider`].
+#[derive(Clone, Debug)]
+pub enum CrlSource {
+    /// A file containing one or more PEM CRLs. The first CRL per issuer wins,
+    /// with duplicates logged at `ERROR` by the TLS factory.
+    File(PathBuf),
+    /// A directory of PEM CRL files, read in filename order without recursion.
+    ///
+    /// All regular files are read, regardless of extension. Symlinks to files
+    /// are followed; subdirectories are ignored. Other file types and broken
+    /// symlinks cause a read error. An empty directory publishes an empty CRL
+    /// collection, which the TLS factory must reject.
+    /// The last CRL per issuer wins in filename/PEM-block order, not issuance order.
+    Directory(PathBuf),
+}
+
+impl CrlSource {
+    async fn read(&self) -> Result<Vec<PemBytes>, tonic_tls::Error> {
+        let paths = match self {
+            Self::File(path) => vec![path.clone()],
+            Self::Directory(directory) => async {
+                let mut entries = tokio::fs::read_dir(directory).await?;
+                let mut paths = Vec::new();
+                while let Some(entry) = entries.next_entry().await? {
+                    let path = entry.path();
+                    let metadata = tokio::fs::metadata(&path).await?;
+                    if metadata.is_dir() {
+                        continue;
+                    }
+                    if !metadata.is_file() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            format!("CRL path '{}' is not a regular file", path.display()),
+                        ));
+                    }
+                    paths.push(path);
+                }
+                paths.sort();
+                Ok::<_, std::io::Error>(paths)
+            }
+            .await
+            .map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to read CRL directory '{}': {error}",
+                        directory.display()
+                    ),
+                )
+            })?,
+        };
+        let mut crls = Vec::with_capacity(paths.len());
+        for path in paths {
+            crls.push(read_file(&path).await?);
+        }
+        Ok(crls)
+    }
+}
 
 /// PEM file paths and polling interval for [`FileWatcherProvider`].
 ///
 /// Configure roots, an identity, or both. Certificate and private-key paths must
-/// be supplied together. The default interval is 600 seconds.
+/// be supplied together. CRLs require a CA certificate file. The default interval
+/// is 600 seconds.
+///
+/// Fluent methods can be called in any order and only assign fields. Validation
+/// and file reads happen in [`FileWatcherProvider::new`]. Struct literals remain
+/// supported.
+///
+/// ```
+/// use std::time::Duration;
+/// use tonic_tls_xds::{CrlSource, FileWatcherConfig};
+///
+/// let config = FileWatcherConfig::default()
+///     .with_ca_certificate_file("ca.pem")
+///     .with_identity_files("client.pem", "client.key")
+///     .with_crl_source(CrlSource::Directory("crls".into()))
+///     .with_refresh_interval(Duration::from_secs(60));
+/// ```
 #[derive(Clone, Debug)]
 pub struct FileWatcherConfig {
     /// PEM trust bundle used to validate peers.
@@ -18,6 +95,8 @@ pub struct FileWatcherConfig {
     pub certificate_file: Option<PathBuf>,
     /// PEM private key for the identity.
     pub private_key_file: Option<PathBuf>,
+    /// Optional CRL file or directory; requires `ca_certificate_file`.
+    pub crl_source: Option<CrlSource>,
     /// Nonzero polling interval; defaults to 600 seconds.
     pub refresh_interval: Duration,
 }
@@ -28,15 +107,51 @@ impl Default for FileWatcherConfig {
             ca_certificate_file: None,
             certificate_file: None,
             private_key_file: None,
+            crl_source: None,
             refresh_interval: Duration::from_secs(600),
         }
     }
 }
 
 impl FileWatcherConfig {
+    /// Sets the PEM trust bundle path.
+    #[must_use]
+    pub fn with_ca_certificate_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.ca_certificate_file = Some(path.into());
+        self
+    }
+
+    /// Sets the PEM identity certificate chain and private-key paths together.
+    #[must_use]
+    pub fn with_identity_files(
+        mut self,
+        certificate_file: impl Into<PathBuf>,
+        private_key_file: impl Into<PathBuf>,
+    ) -> Self {
+        self.certificate_file = Some(certificate_file.into());
+        self.private_key_file = Some(private_key_file.into());
+        self
+    }
+
+    /// Sets the CRL file or directory. A CA certificate file is also required.
+    #[must_use]
+    pub fn with_crl_source(mut self, source: CrlSource) -> Self {
+        self.crl_source = Some(source);
+        self
+    }
+
+    /// Sets the polling interval, validated by [`FileWatcherProvider::new`].
+    #[must_use]
+    pub fn with_refresh_interval(mut self, interval: Duration) -> Self {
+        self.refresh_interval = interval;
+        self
+    }
+
     fn validate(&self) -> Result<(), tonic_tls::Error> {
         let message = if self.certificate_file.is_some() != self.private_key_file.is_some() {
             Some("certificate_file and private_key_file must be supplied together")
+        } else if self.crl_source.is_some() && self.ca_certificate_file.is_none() {
+            Some("crl_source requires ca_certificate_file")
         } else if self.ca_certificate_file.is_none() && self.certificate_file.is_none() {
             Some("at least one CA certificate file or identity must be configured")
         } else if self.refresh_interval.is_zero() {
@@ -76,33 +191,29 @@ impl FileWatcherConfig {
                 .into());
             }
         };
-        match (roots, identity) {
-            (Some(roots), Some(identity)) => Ok(CertificateData::Both { roots, identity }),
-            (Some(roots), None) => Ok(CertificateData::RootsOnly { roots }),
-            (None, Some(identity)) => Ok(CertificateData::IdentityOnly { identity }),
-            (None, None) => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "at least one CA certificate file or identity must be configured",
-            )
-            .into()),
+        let crls = match &self.crl_source {
+            Some(source) => Some(source.read().await?),
+            None => None,
+        };
+        let mut data = CertificateData::new(roots, identity, crls)?;
+        if matches!(&self.crl_source, Some(CrlSource::Directory(_))) {
+            data.crl_selection = CrlSelection::LastPerIssuer;
         }
+        Ok(data)
     }
 }
 
-async fn read_file(path: &Path) -> Result<Vec<u8>, tonic_tls::Error> {
+async fn read_file(path: &Path) -> Result<PemBytes, tonic_tls::Error> {
     tokio::fs::read(path).await.map_err(|error| {
         std::io::Error::new(
             error.kind(),
-            format!(
-                "failed to read certificate file '{}': {error}",
-                path.display()
-            ),
+            format!("failed to read PEM file '{}': {error}", path.display()),
         )
         .into()
     })
 }
 
-/// A backend-neutral certificate provider that polls PEM files.
+/// A backend-neutral certificate provider that polls PEM certificate and CRL files.
 ///
 /// Files are published as raw PEM bytes without certificate validation. Read
 /// failures during refresh are logged at `WARN`; the last successfully read
@@ -129,11 +240,9 @@ async fn read_file(path: &Path) -> Result<Vec<u8>, tonic_tls::Error> {
 ///
 /// let domain = "localhost".try_into()?;
 /// let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(config, domain);
-/// let provider = Arc::new(FileWatcherProvider::new(FileWatcherConfig {
-///     certificate_file: Some("client.pem".into()),
-///     private_key_file: Some("client.key".into()),
-///     ..Default::default()
-/// }).await?);
+/// let watcher_config = FileWatcherConfig::default()
+///     .with_identity_files("client.pem", "client.key");
+/// let provider = Arc::new(FileWatcherProvider::new(watcher_config).await?);
 /// let transport = tonic_tls::TcpTransport::from_endpoint(&endpoint);
 /// let connector = ReloadableTlsConnector::new(transport, provider, factory)?;
 /// let channel = endpoint.connect_with_connector(connector).await?;
@@ -239,10 +348,64 @@ mod tests {
     use futures::FutureExt;
 
     fn roots_config(path: &Path) -> FileWatcherConfig {
-        FileWatcherConfig {
-            ca_certificate_file: Some(path.into()),
-            ..Default::default()
-        }
+        FileWatcherConfig::default().with_ca_certificate_file(path)
+    }
+
+    #[test]
+    fn fluent_configuration_preserves_defaults_and_replaces_settings() {
+        let config =
+            FileWatcherConfig::default().with_crl_source(CrlSource::Directory("crls".into()));
+        assert!(config.ca_certificate_file.is_none());
+        assert!(config.certificate_file.is_none());
+        assert!(config.private_key_file.is_none());
+        assert_eq!(config.refresh_interval, Duration::from_secs(600));
+
+        let config = config
+            .with_ca_certificate_file("ca.pem")
+            .with_identity_files(Path::new("client.pem"), String::from("client.key"))
+            .with_refresh_interval(Duration::from_secs(60));
+        assert_eq!(
+            config.ca_certificate_file.as_deref(),
+            Some(Path::new("ca.pem"))
+        );
+        assert_eq!(
+            config.certificate_file.as_deref(),
+            Some(Path::new("client.pem"))
+        );
+        assert_eq!(
+            config.private_key_file.as_deref(),
+            Some(Path::new("client.key"))
+        );
+        assert!(matches!(
+            &config.crl_source,
+            Some(CrlSource::Directory(path)) if path == Path::new("crls"),
+        ));
+        assert_eq!(config.refresh_interval, Duration::from_secs(60));
+        config.validate().unwrap();
+
+        let config = config
+            .with_ca_certificate_file(PathBuf::from("new-ca.pem"))
+            .with_identity_files(String::from("new-client.pem"), Path::new("new-client.key"))
+            .with_crl_source(CrlSource::File("crl.pem".into()))
+            .with_refresh_interval(Duration::from_secs(30));
+        assert_eq!(
+            config.ca_certificate_file.as_deref(),
+            Some(Path::new("new-ca.pem"))
+        );
+        assert_eq!(
+            config.certificate_file.as_deref(),
+            Some(Path::new("new-client.pem"))
+        );
+        assert_eq!(
+            config.private_key_file.as_deref(),
+            Some(Path::new("new-client.key"))
+        );
+        assert!(matches!(
+            &config.crl_source,
+            Some(CrlSource::File(path)) if path == Path::new("crl.pem"),
+        ));
+        assert_eq!(config.refresh_interval, Duration::from_secs(30));
+        config.validate().unwrap();
     }
 
     #[tokio::test]
@@ -250,6 +413,10 @@ mod tests {
         let roots = roots_config(Path::new("roots.pem"));
         for (config, message) in [
             (FileWatcherConfig::default(), "at least one"),
+            (
+                FileWatcherConfig::default().with_crl_source(CrlSource::File("crl.pem".into())),
+                "crl_source requires ca_certificate_file",
+            ),
             (
                 FileWatcherConfig {
                     certificate_file: Some("cert.pem".into()),
@@ -265,19 +432,10 @@ mod tests {
                 "supplied together",
             ),
             (
-                FileWatcherConfig {
-                    refresh_interval: Duration::ZERO,
-                    ..roots.clone()
-                },
+                roots.clone().with_refresh_interval(Duration::ZERO),
                 "greater than zero",
             ),
-            (
-                FileWatcherConfig {
-                    refresh_interval: Duration::MAX,
-                    ..roots
-                },
-                "too large",
-            ),
+            (roots.with_refresh_interval(Duration::MAX), "too large"),
         ] {
             let error = FileWatcherProvider::new(config).await.err().unwrap();
             assert!(error.to_string().contains(message), "{error}");
@@ -309,16 +467,9 @@ mod tests {
         std::fs::write(&key_path, b"key").unwrap();
         let identity = Identity::from_pem(b"certificate", b"key");
         for expected in [
-            CertificateData::RootsOnly {
-                roots: b"roots".to_vec(),
-            },
-            CertificateData::IdentityOnly {
-                identity: identity.clone(),
-            },
-            CertificateData::Both {
-                roots: b"roots".to_vec(),
-                identity,
-            },
+            CertificateData::new(Some(b"roots".to_vec()), None, None).unwrap(),
+            CertificateData::new(None, Some(identity.clone()), None).unwrap(),
+            CertificateData::new(Some(b"roots".to_vec()), Some(identity), None).unwrap(),
         ] {
             let config = FileWatcherConfig {
                 ca_certificate_file: expected.roots().map(|_| root_path.clone()),
@@ -342,6 +493,124 @@ mod tests {
             .err()
             .unwrap();
         assert!(error.to_string().contains(path.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn crl_file_refresh_publishes_raw_bytes_and_retains_on_read_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = dir.path().join("roots.pem");
+        let crl = dir.path().join("crl.pem");
+        std::fs::write(&roots, b"roots").unwrap();
+        let config = FileWatcherConfig {
+            crl_source: Some(CrlSource::File(crl.clone())),
+            ..roots_config(&roots)
+        };
+        assert!(FileWatcherProvider::new(config.clone()).await.is_err());
+        std::fs::write(&crl, b"crl-1").unwrap();
+        let provider = FileWatcherProvider::new(config).await.unwrap();
+        let initial = provider.snapshot().unwrap();
+        assert_eq!(initial.crls().unwrap(), &[b"crl-1".to_vec()]);
+        assert_eq!(initial.crl_selection(), CrlSelection::FirstPerIssuer);
+        assert!(!provider.state.refresh().await.unwrap());
+        assert!(Arc::ptr_eq(&initial, &provider.snapshot().unwrap()));
+
+        std::fs::remove_file(&crl).unwrap();
+        assert!(provider.state.refresh().await.is_err());
+        assert!(Arc::ptr_eq(&initial, &provider.snapshot().unwrap()));
+        for bytes in [b"crl-2".as_slice(), b""] {
+            std::fs::write(&crl, bytes).unwrap();
+            assert!(provider.state.refresh().await.unwrap());
+            assert_eq!(
+                provider.snapshot().unwrap().crls().unwrap(),
+                &[bytes.to_vec()]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn crl_directory_tracks_additions_removals_and_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = dir.path().join("roots.pem");
+        let cert = dir.path().join("client.pem");
+        let key = dir.path().join("client.key");
+        let crls = dir.path().join("crls");
+        std::fs::write(&roots, b"roots").unwrap();
+        std::fs::write(&cert, b"cert").unwrap();
+        std::fs::write(&key, b"key").unwrap();
+        let config = roots_config(&roots)
+            .with_identity_files(cert, key)
+            .with_crl_source(CrlSource::Directory(crls.clone()));
+        assert!(FileWatcherProvider::new(config.clone()).await.is_err());
+        std::fs::create_dir(&crls).unwrap();
+        // Deliberately create in reverse filename order; extensions are not filtered.
+        std::fs::write(crls.join("b.crl"), b"b").unwrap();
+        std::fs::write(crls.join("a"), b"a").unwrap();
+        std::fs::create_dir(crls.join("nested")).unwrap();
+        std::fs::write(crls.join("nested/ignored.pem"), b"ignored").unwrap();
+        let provider = FileWatcherProvider::new(config).await.unwrap();
+        let initial = provider.snapshot().unwrap();
+        assert_eq!(initial.crls().unwrap(), &[b"a".to_vec(), b"b".to_vec()]);
+        assert_eq!(initial.crl_selection(), CrlSelection::LastPerIssuer);
+        assert_eq!(
+            initial.identity(),
+            Some(&Identity::from_pem(b"cert", b"key"))
+        );
+        assert!(!provider.state.refresh().await.unwrap());
+        assert!(Arc::ptr_eq(&initial, &provider.snapshot().unwrap()));
+
+        std::fs::write(crls.join("c.pem"), b"c").unwrap();
+        assert!(provider.state.refresh().await.unwrap());
+        assert_eq!(
+            provider.snapshot().unwrap().crls().unwrap(),
+            &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()],
+        );
+        std::fs::remove_file(crls.join("b.crl")).unwrap();
+        assert!(provider.state.refresh().await.unwrap());
+        assert_eq!(
+            provider.snapshot().unwrap().crls().unwrap(),
+            &[b"a".to_vec(), b"c".to_vec()]
+        );
+        std::fs::remove_file(crls.join("a")).unwrap();
+        std::fs::remove_file(crls.join("c.pem")).unwrap();
+        assert!(provider.state.refresh().await.unwrap());
+        assert!(provider.snapshot().unwrap().crls().unwrap().is_empty());
+        let empty = provider.snapshot().unwrap();
+
+        let moved = dir.path().join("moved");
+        std::fs::rename(&crls, &moved).unwrap();
+        assert!(provider.state.refresh().await.is_err());
+        assert!(Arc::ptr_eq(&empty, &provider.snapshot().unwrap()));
+        std::fs::rename(&moved, &crls).unwrap();
+        std::fs::write(crls.join("a"), b"restored").unwrap();
+        assert!(provider.state.refresh().await.unwrap());
+        assert_eq!(
+            provider.snapshot().unwrap().crls().unwrap(),
+            &[b"restored".to_vec()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn crl_directory_follows_file_symlinks_and_rejects_broken_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = dir.path().join("roots.pem");
+        let crl = dir.path().join("crl.pem");
+        let crls = dir.path().join("crls");
+        std::fs::write(&roots, b"roots").unwrap();
+        std::fs::write(&crl, b"crl").unwrap();
+        std::fs::create_dir(&crls).unwrap();
+        std::os::unix::fs::symlink(&crl, crls.join("link")).unwrap();
+        let provider = FileWatcherProvider::new(FileWatcherConfig {
+            crl_source: Some(CrlSource::Directory(crls)),
+            ..roots_config(&roots)
+        })
+        .await
+        .unwrap();
+        let initial = provider.snapshot().unwrap();
+        assert_eq!(initial.crls().unwrap(), &[b"crl".to_vec()]);
+        std::fs::remove_file(&crl).unwrap();
+        assert!(provider.state.refresh().await.is_err());
+        assert!(Arc::ptr_eq(&initial, &provider.snapshot().unwrap()));
     }
 
     #[tokio::test]
@@ -375,20 +644,24 @@ mod tests {
         assert!(provider.state.refresh().await.unwrap());
         assert_eq!(
             provider.snapshot().unwrap().as_ref(),
-            &CertificateData::Both {
-                roots: b"root-2".to_vec(),
-                identity: Identity::from_pem(b"identity-2", b"identity-1"),
-            },
+            &CertificateData::new(
+                Some(b"root-2".to_vec()),
+                Some(Identity::from_pem(b"identity-2", b"identity-1")),
+                None,
+            )
+            .unwrap(),
         );
         std::fs::write(&key_path, b"identity-2").unwrap();
         std::fs::write(&root_path, b"").unwrap();
         assert!(provider.state.refresh().await.unwrap());
         assert_eq!(
             provider.snapshot().unwrap().as_ref(),
-            &CertificateData::Both {
-                roots: Vec::new(),
-                identity: Identity::from_pem(b"identity-2", b"identity-2"),
-            },
+            &CertificateData::new(
+                Some(Vec::new()),
+                Some(Identity::from_pem(b"identity-2", b"identity-2")),
+                None,
+            )
+            .unwrap(),
         );
 
         std::fs::write(&root_path, b"root-2").unwrap();
@@ -397,10 +670,12 @@ mod tests {
         assert!(!Arc::ptr_eq(&initial, &updated));
         assert_eq!(
             updated.as_ref(),
-            &CertificateData::Both {
-                roots: b"root-2".to_vec(),
-                identity: Identity::from_pem(b"identity-2", b"identity-2"),
-            },
+            &CertificateData::new(
+                Some(b"root-2".to_vec()),
+                Some(Identity::from_pem(b"identity-2", b"identity-2")),
+                None,
+            )
+            .unwrap(),
         );
         assert!(!provider.state.refresh().await.unwrap());
         assert!(Arc::ptr_eq(&updated, &provider.snapshot().unwrap()));

@@ -14,8 +14,10 @@ pub type ConnectorPair<IO, C> = (C, <C as tonic_tls::TlsConnector<IO>>::Arg);
 /// Used by [`ReloadableTlsConnector`] on a cache miss. Implementations retain their
 /// base configuration and any stable connection settings. They must validate
 /// the supplied material and apply backend policies such as session resumption
-/// before returning a usable pair. Build errors fail construction or the
-/// connection attempt.
+/// before returning a usable pair. Every supplied component must be applied or
+/// rejected with an error; unsupported material must never be silently ignored.
+/// In particular, supplied CRLs require the [`CertificateData::crls`] revocation
+/// policy. Build errors fail construction or the connection attempt.
 pub trait TlsConnectorFactory<IO>: Send + Sync + 'static
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
@@ -328,9 +330,7 @@ mod tests {
     // Fake certificate bytes encode the [version, argument] echoed by the handshake.
     // Version 0 rejects the build; argument 0 rejects the handshake.
     fn snapshot(version: u8, arg: u8) -> Arc<CertificateData> {
-        Arc::new(CertificateData::RootsOnly {
-            roots: vec![version, arg],
-        })
+        Arc::new(CertificateData::new(Some(vec![version, arg]), None, None).unwrap())
     }
 
     struct TestFactory(Arc<AtomicUsize>);
@@ -343,12 +343,52 @@ mod tests {
             data: &CertificateData,
         ) -> Result<(TestConnector, u8), tonic_tls::Error> {
             self.0.fetch_add(1, Ordering::Relaxed);
+            if data.crls().is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "test TLS factory does not support CRLs",
+                )
+                .into());
+            }
             let version = data.roots().unwrap()[0];
             if version == 0 {
                 return Err(std::io::Error::other("invalid certificate data").into());
             }
             Ok((TestConnector(version), data.roots().unwrap()[1]))
         }
+    }
+
+    struct FailureCase {
+        data: Result<Arc<CertificateData>, &'static str>,
+        message: &'static str,
+        kind: std::io::ErrorKind,
+        builds: usize,
+    }
+
+    fn failure_cases() -> [FailureCase; 3] {
+        [
+            FailureCase {
+                data: Err("provider unavailable"),
+                message: "provider unavailable",
+                kind: std::io::ErrorKind::Other,
+                builds: 0,
+            },
+            FailureCase {
+                data: Ok(snapshot(0, 99)),
+                message: "invalid certificate data",
+                kind: std::io::ErrorKind::Other,
+                builds: 1,
+            },
+            FailureCase {
+                data: Ok(Arc::new(
+                    CertificateData::new(Some(vec![1, 41]), None, Some(vec![b"crl".to_vec()]))
+                        .unwrap(),
+                )),
+                message: "test TLS factory does not support CRLs",
+                kind: std::io::ErrorKind::Unsupported,
+                builds: 1,
+            },
+        ]
     }
 
     #[test]
@@ -360,35 +400,31 @@ mod tests {
         let (backend, arg) = connector.connector_pair().unwrap();
         assert_eq!((backend.0, arg), (1, 41));
 
-        *provider.data.lock().unwrap() = Err("provider unavailable");
-        assert_eq!(
-            connector.connector_pair().unwrap_err().to_string(),
-            "provider unavailable",
-        );
-        assert_eq!(builds.load(Ordering::Relaxed), 1);
+        let mut expected_builds = 1;
+        for case in failure_cases() {
+            *provider.data.lock().unwrap() = case.data;
+            let error = connector.connector_pair().unwrap_err();
+            assert_eq!(error.to_string(), case.message);
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                case.kind
+            );
+            expected_builds += case.builds;
+            assert_eq!(builds.load(Ordering::Relaxed), expected_builds);
 
-        *provider.data.lock().unwrap() = Ok(snapshot(0, 99));
-        assert_eq!(
-            connector.connector_pair().unwrap_err().to_string(),
-            "invalid certificate data",
-        );
-        assert_eq!(builds.load(Ordering::Relaxed), 2);
-
-        // Restoring the original Arc must reuse the cached pair without rebuilding.
-        *provider.data.lock().unwrap() = Ok(good);
-        let (backend, arg) = connector.connector_pair().unwrap();
-        assert_eq!((backend.0, arg), (1, 41));
-        assert_eq!(builds.load(Ordering::Relaxed), 2);
+            // Restoring the original Arc must reuse the cached pair without rebuilding.
+            *provider.data.lock().unwrap() = Ok(good.clone());
+            let (backend, arg) = connector.connector_pair().unwrap();
+            assert_eq!((backend.0, arg), (1, 41));
+            assert_eq!(builds.load(Ordering::Relaxed), expected_builds);
+        }
     }
 
     #[test]
     fn construction_rejects_provider_and_factory_errors_without_connecting() {
-        for (data, message, expected_builds) in [
-            (Err("provider unavailable"), "provider unavailable", 0),
-            (Ok(snapshot(0, 99)), "invalid certificate data", 1),
-        ] {
+        for case in failure_cases() {
             let provider = TestProvider::new(snapshot(1, 41));
-            *provider.data.lock().unwrap() = data;
+            *provider.data.lock().unwrap() = case.data;
             let builds = Arc::new(AtomicUsize::new(0));
             let (tx, rx) = mpsc::channel();
             let error = ReloadableTlsConnector::new(
@@ -399,9 +435,13 @@ mod tests {
             .err()
             .expect("construction should reject an unavailable or invalid snapshot");
 
-            assert_eq!(error.to_string(), message);
+            assert_eq!(error.to_string(), case.message);
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                case.kind
+            );
             assert_eq!(provider.snapshot_calls.load(Ordering::Relaxed), 1);
-            assert_eq!(builds.load(Ordering::Relaxed), expected_builds);
+            assert_eq!(builds.load(Ordering::Relaxed), case.builds);
             assert!(rx.try_recv().is_err());
         }
     }
