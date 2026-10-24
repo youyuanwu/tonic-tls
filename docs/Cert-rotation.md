@@ -1,6 +1,7 @@
 # Certificate Rotation
 
-Client certificate providers, reloadable connectors, and file watching are
+Client certificate providers, reloadable connectors, CRL checking/rotation with
+rustls, and file/directory watching are
 documented in [tonic-tls-xds](../tonic-tls-xds/README.md).
 
 ## Server certificate rotation
@@ -106,3 +107,7 @@ Both server tests verify the full rotation flow:
 2. Server rotates to cert2 at runtime.
 3. Client trusting cert1 fails (cert mismatch).
 4. Client trusting cert2 succeeds.
+
+Both tests assert the RPC response before and after rotation using a shared
+helper. They connect to an already-bound listener without a fixed startup sleep;
+connection and RPC timeouts bound startup and verification failures.

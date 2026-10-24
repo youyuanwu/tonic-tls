@@ -1,16 +1,21 @@
 //! Rustls adapter for provider-driven TLS connections.
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    sync::Arc,
+};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     client::{Resumption, WebPkiServerVerifier},
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
+    pki_types::{
+        CertificateDer, CertificateRevocationListDer, PrivateKeyDer, ServerName, pem::PemObject,
+    },
     sign::{CertifiedKey, SingleCertAndKey},
 };
 
-use crate::CertificateData;
+use crate::{CertificateData, CrlSelection};
 
 /// A rustls handshake connector produced by [`TlsConnectorFactory`].
 #[derive(Clone)]
@@ -42,6 +47,15 @@ where
 /// standard certificate-chain and hostname verifier. Supplied identity replaces
 /// its client certificate resolver. Omitted material retains the base settings,
 /// not the previous snapshot's settings.
+///
+/// Supplied CRLs enable revocation checking for the full peer chain, excluding
+/// the trust anchor. Unknown status and expired CRLs are rejected. Every supplied
+/// buffer must contain at least one PEM CRL; empty collections are also rejected.
+/// Parsing happens at build time; signature, applicability, revocation, and expiry
+/// checks happen during handshakes. No CRLs are downloaded from distribution points.
+/// One CRL per DER-encoded issuer is selected using [`CertificateData::crl_selection`].
+/// All supplied CRLs are parsed, including duplicates; there is no newest-CRL
+/// selection or fallback if the selected CRL fails verification.
 ///
 /// Other settings, including ALPN, are preserved, except that session resumption
 /// is disabled so new connections authenticate with current credentials and trust.
@@ -81,12 +95,18 @@ where
             for cert in CertificateDer::pem_slice_iter(roots) {
                 store.add(cert?)?;
             }
-            let verifier = WebPkiServerVerifier::builder_with_provider(
+            let mut verifier = WebPkiServerVerifier::builder_with_provider(
                 Arc::new(store),
                 config.crypto_provider().clone(),
-            )
-            .build()?;
-            config.dangerous().set_certificate_verifier(verifier);
+            );
+            if let Some(bundles) = data.crls() {
+                verifier = verifier
+                    .with_crls(select_crls(bundles, data.crl_selection())?)
+                    .enforce_revocation_expiration();
+            }
+            config
+                .dangerous()
+                .set_certificate_verifier(verifier.build()?);
         }
         if let Some(identity) = data.identity() {
             let certs = CertificateDer::pem_slice_iter(identity.cert_chain())
@@ -107,4 +127,50 @@ where
             self.domain.clone(),
         ))
     }
+}
+
+fn select_crls(
+    bundles: &[Vec<u8>],
+    selection: CrlSelection,
+) -> Result<Vec<CertificateRevocationListDer<'static>>, tonic_tls::Error> {
+    if bundles.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CRL collection must not be empty",
+        )
+        .into());
+    }
+    let mut by_issuer = BTreeMap::new();
+    for (bundle_index, bundle) in bundles.iter().enumerate() {
+        let crls =
+            CertificateRevocationListDer::pem_slice_iter(bundle).collect::<Result<Vec<_>, _>>()?;
+        if crls.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("CRL bundle {bundle_index} must contain at least one PEM CRL"),
+            )
+            .into());
+        }
+        for (crl_index, crl) in crls.into_iter().enumerate() {
+            // Parse entries too, so a malformed duplicate cannot be silently discarded.
+            let parsed =
+                webpki::CertRevocationList::from(webpki::OwnedCertRevocationList::from_der(&crl)?);
+            match by_issuer.entry(parsed.issuer().to_vec()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(crl);
+                }
+                Entry::Occupied(mut entry) => match selection {
+                    CrlSelection::FirstPerIssuer => tracing::error!(
+                        bundle_index,
+                        crl_index,
+                        "multiple CRLs with the same issuer; keeping the first CRL",
+                    ),
+                    CrlSelection::LastPerIssuer => {
+                        entry.insert(crl);
+                    }
+                },
+            }
+        }
+    }
+    Ok(by_issuer.into_values().collect())
 }

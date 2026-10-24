@@ -36,6 +36,7 @@ schannel.workspace = true
 openssl-ktls.workspace = true
 arc-swap.workspace = true
 tempfile.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 tonic-prost-build.workspace = true
