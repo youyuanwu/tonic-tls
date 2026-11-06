@@ -21,6 +21,12 @@ use crate::{CertificateData, CrlSelection};
 #[derive(Clone)]
 pub struct TlsConnector(tokio_rustls::TlsConnector);
 
+impl From<Arc<ClientConfig>> for TlsConnector {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        Self(tokio_rustls::TlsConnector::from(config))
+    }
+}
+
 impl<IO> tonic_tls::TlsConnector<IO> for TlsConnector
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
@@ -40,13 +46,13 @@ where
     }
 }
 
-/// A rustls implementation of [`crate::TlsConnectorFactory`].
+/// Applies a PEM snapshot to a clone of the base rustls configuration.
 ///
-/// Use with [`crate::ReloadableTlsConnector`] to apply PEM snapshots to a base
-/// configuration. Supplied roots replace its server verifier with rustls's
+/// Supplied roots replace the base server verifier with rustls's
 /// standard certificate-chain and hostname verifier. Supplied identity replaces
 /// its client certificate resolver. Omitted material retains the base settings,
-/// not the previous snapshot's settings.
+/// not the previous snapshot's settings. Always pass the original base
+/// configuration when building successive snapshots.
 ///
 /// Supplied CRLs enable revocation checking for the full peer chain, excluding
 /// the trust anchor. Unknown status and expired CRLs are rejected. Every supplied
@@ -60,8 +66,79 @@ where
 /// Other settings, including ALPN, are preserved, except that session resumption
 /// is disabled so new connections authenticate with current credentials and trust.
 ///
-/// Factory builds return errors for invalid PEM, unusable roots, or invalid
-/// certificate/key pairs. No fallback credentials are substituted.
+/// Returns errors for invalid PEM, unusable roots, or invalid certificate/key
+/// pairs. No fallback credentials are substituted, and the base is not modified.
+///
+/// The returned configuration is owned so a custom [`crate::TlsConnectorFactory`]
+/// can adjust backend-specific settings before wrapping it in [`TlsConnector`].
+/// Replacing its verifier or re-enabling resumption can undo the validation and
+/// rotation guarantees above; custom factories are responsible for preserving them.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use tokio_rustls::rustls::{ClientConfig, pki_types::ServerName};
+/// use tonic_tls_xds::{CertificateData, rustls::{build_client_config, TlsConnector}};
+///
+/// fn build_custom_connector(
+///     base: &ClientConfig,
+///     data: &CertificateData,
+///     server_name: ServerName<'static>,
+/// ) -> Result<(TlsConnector, ServerName<'static>), tonic_tls::Error> {
+///     let mut config = build_client_config(base, data)?;
+///     config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
+///     Ok((TlsConnector::from(Arc::new(config)), server_name))
+/// }
+/// ```
+pub fn build_client_config(
+    base: &ClientConfig,
+    data: &CertificateData,
+) -> Result<ClientConfig, tonic_tls::Error> {
+    let mut config = base.clone();
+    if let Some(roots) = data.roots() {
+        let mut store = RootCertStore::empty();
+        for cert in CertificateDer::pem_slice_iter(roots) {
+            store.add(cert?)?;
+        }
+        let mut verifier = WebPkiServerVerifier::builder_with_provider(
+            Arc::new(store),
+            config.crypto_provider().clone(),
+        );
+        if let Some(bundles) = data.crls() {
+            verifier = verifier
+                .with_crls(select_crls(bundles, data.crl_selection())?)
+                .enforce_revocation_expiration();
+        }
+        config
+            .dangerous()
+            .set_certificate_verifier(verifier.build()?);
+    }
+    if let Some(identity) = data.identity() {
+        let certs =
+            CertificateDer::pem_slice_iter(identity.cert_chain()).collect::<Result<Vec<_>, _>>()?;
+        if certs.is_empty() {
+            return Err(tokio_rustls::rustls::Error::NoCertificatesPresented.into());
+        }
+        let key = PrivateKeyDer::from_pem_slice(identity.key())?;
+        let certified_key = CertifiedKey::from_der(certs, key, config.crypto_provider())?;
+        config.client_auth_cert_resolver = Arc::new(SingleCertAndKey::from(certified_key));
+    }
+    // Resumed sessions can retain an old authenticated identity or trust
+    // decision without exchanging certificates again.
+    config.resumption = Resumption::disabled();
+
+    Ok(config)
+}
+
+/// A rustls implementation of [`crate::TlsConnectorFactory`].
+///
+/// Use with [`crate::ReloadableTlsConnector`] to apply snapshots to the original
+/// base configuration using [`build_client_config`], then create a handshake
+/// connector paired with the configured server name.
+///
+/// For post-snapshot customization, use [`build_client_config`] in a custom
+/// factory instead.
 #[derive(Clone, Debug)]
 pub struct TlsConnectorFactory {
     config: Arc<ClientConfig>,
@@ -89,43 +166,8 @@ where
         &self,
         data: &CertificateData,
     ) -> Result<(Self::Connector, ServerName<'static>), tonic_tls::Error> {
-        let mut config = self.config.as_ref().clone();
-        if let Some(roots) = data.roots() {
-            let mut store = RootCertStore::empty();
-            for cert in CertificateDer::pem_slice_iter(roots) {
-                store.add(cert?)?;
-            }
-            let mut verifier = WebPkiServerVerifier::builder_with_provider(
-                Arc::new(store),
-                config.crypto_provider().clone(),
-            );
-            if let Some(bundles) = data.crls() {
-                verifier = verifier
-                    .with_crls(select_crls(bundles, data.crl_selection())?)
-                    .enforce_revocation_expiration();
-            }
-            config
-                .dangerous()
-                .set_certificate_verifier(verifier.build()?);
-        }
-        if let Some(identity) = data.identity() {
-            let certs = CertificateDer::pem_slice_iter(identity.cert_chain())
-                .collect::<Result<Vec<_>, _>>()?;
-            if certs.is_empty() {
-                return Err(tokio_rustls::rustls::Error::NoCertificatesPresented.into());
-            }
-            let key = PrivateKeyDer::from_pem_slice(identity.key())?;
-            let certified_key = CertifiedKey::from_der(certs, key, config.crypto_provider())?;
-            config.client_auth_cert_resolver = Arc::new(SingleCertAndKey::from(certified_key));
-        }
-        // Resumed sessions can retain an old authenticated identity or trust
-        // decision without exchanging certificates again.
-        config.resumption = Resumption::disabled();
-
-        Ok((
-            TlsConnector(tokio_rustls::TlsConnector::from(Arc::new(config))),
-            self.domain.clone(),
-        ))
+        let config = build_client_config(&self.config, data)?;
+        Ok((TlsConnector::from(Arc::new(config)), self.domain.clone()))
     }
 }
 

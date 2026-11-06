@@ -629,3 +629,4 @@ fn rustls_client_factory_rejects_empty_chain_with_unknown_key_consistency() {
 }
 
 mod crl_tests;
+mod raw_tcp_tests;
