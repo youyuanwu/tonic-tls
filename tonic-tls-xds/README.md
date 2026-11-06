@@ -148,6 +148,35 @@ to disable checking. Omitted roots retain the original base verifier.
 Non-exportable private keys require backend-specific configuration and cannot
 be represented by this PEM API.
 
+## Custom TLS configuration
+
+Set ordinary TLS options on the base rustls configuration. For adjustments that
+must happen after applying a snapshot, implement `TlsConnectorFactory` using
+[`rustls::build_client_config`](https://docs.rs/tonic-tls-xds/latest/tonic_tls_xds/rustls/fn.build_client_config.html).
+It returns an owned `ClientConfig` that you can customize, then wrap with
+`rustls::TlsConnector::from(Arc::new(config))` and return with your server name.
+
+Always build from the original base configuration, not the previous snapshot's
+result. Customization runs when the factory rebuilds for a changed snapshot;
+unchanged snapshots reuse the cached connector and argument. Replacing the
+verifier or re-enabling resumption can undo CRL and rotation guarantees.
+
+### Raw Tokio streams
+
+For a connection without tonic, read a fresh snapshot before each TLS handshake
+and build the configuration yourself:
+
+```rust
+let snapshot = provider.snapshot()?;
+let config = tonic_tls_xds::rustls::build_client_config(&base, &snapshot)?;
+let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
+let stream = connector.connect(server_name, tcp_stream).await?;
+```
+
+Keep the file watcher alive across connections. This manual path rebuilds the
+configuration each time rather than using the reloadable connector's cache.
+Existing streams keep their authenticated identity and trust decision.
+
 ## Diagnostics and reference
 
 This crate uses `tracing`. With a subscriber and environment filtering configured,
