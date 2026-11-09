@@ -1,10 +1,11 @@
+use super::backend::VerificationFailure;
 use super::*;
 use rcgen::{CertificateParams, CertifiedIssuer, Issuer, KeyPair};
 use rustls::{CertificateError, pki_types::UnixTime};
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use tonic_tls_xds::{CrlSelection, CrlSource, FileWatcherConfig, FileWatcherProvider};
 
-fn ca_params(name: &str, serial: u64) -> CertificateParams {
+pub(super) fn ca_params(name: &str, serial: u64) -> CertificateParams {
     let mut params = CertificateParams::new(Vec::new()).unwrap();
     params
         .distinguished_name
@@ -18,18 +19,18 @@ fn ca_params(name: &str, serial: u64) -> CertificateParams {
     params
 }
 
-fn ca(name: &str) -> CertifiedIssuer<'static, KeyPair> {
+pub(super) fn ca(name: &str) -> CertifiedIssuer<'static, KeyPair> {
     CertifiedIssuer::self_signed(ca_params(name, 1), KeyPair::generate().unwrap()).unwrap()
 }
 
-fn server_cert(issuer: &Issuer<'_, KeyPair>) -> (rcgen::Certificate, KeyPair) {
+pub(super) fn server_cert(issuer: &Issuer<'_, KeyPair>) -> (rcgen::Certificate, KeyPair) {
     let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
     params.serial_number = Some(3.into());
     let key = KeyPair::generate().unwrap();
     (params.signed_by(&key, issuer).unwrap(), key)
 }
 
-fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -> Vec<u8> {
+pub(super) fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -> Vec<u8> {
     rcgen::CertificateRevocationListParams {
         this_update: rcgen::date_time_ymd(2025, 1, 1),
         next_update: rcgen::date_time_ymd(2030, 1, 1),
@@ -88,25 +89,40 @@ fn config(clock: Arc<Clock>) -> ClientConfig {
     config
 }
 
-fn snapshot(issuer: &CertifiedIssuer<'_, KeyPair>, crls: Vec<Vec<u8>>) -> CertificateData {
+pub(super) fn snapshot(
+    issuer: &CertifiedIssuer<'_, KeyPair>,
+    crls: Vec<Vec<u8>>,
+) -> CertificateData {
     CertificateData::new(Some(issuer.pem().into_bytes()), None, Some(crls)).unwrap()
 }
 
-fn build(data: &CertificateData, clock: Arc<Clock>) -> tonic_tls_xds::rustls::TlsConnector {
+type Pair<B> = tonic_tls_xds::ConnectorPair<tokio::io::DuplexStream, <B as TestBackend>::Connector>;
+
+fn build_with_clock(data: &CertificateData, clock: Arc<Clock>) -> Pair<Rustls> {
     let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
         Arc::new(config(clock)),
         "localhost".try_into().unwrap(),
     );
     tonic_tls_xds::TlsConnectorFactory::<tokio::io::DuplexStream>::build_connector(&factory, data)
         .unwrap()
-        .0
 }
 
-struct CrlErrorEvents(Arc<AtomicUsize>);
+fn try_build<B: TestBackend>(data: &CertificateData) -> Result<Pair<B>, tonic_tls::Error> {
+    tonic_tls_xds::TlsConnectorFactory::<tokio::io::DuplexStream>::build_connector(
+        &B::factory(&[], None),
+        data,
+    )
+}
+
+fn build<B: TestBackend>(data: &CertificateData) -> Pair<B> {
+    try_build::<B>(data).unwrap()
+}
+
+pub(super) struct CrlErrorEvents(pub(super) Arc<AtomicUsize>, pub(super) &'static str);
 
 impl tracing::Subscriber for CrlErrorEvents {
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        metadata.target() == "tonic_tls_xds::rustls" && *metadata.level() == tracing::Level::ERROR
+        metadata.target() == self.1 && *metadata.level() == tracing::Level::ERROR
     }
 
     fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
@@ -128,15 +144,16 @@ impl tracing::Subscriber for CrlErrorEvents {
     fn exit(&self, _: &tracing::span::Id) {}
 }
 
-fn build_with_error_count(data: &CertificateData) -> (tonic_tls_xds::rustls::TlsConnector, usize) {
+fn build_with_error_count<B: TestBackend>(data: &CertificateData) -> (Pair<B>, usize) {
     let errors = Arc::new(AtomicUsize::new(0));
-    let connector = tracing::subscriber::with_default(CrlErrorEvents(errors.clone()), || {
-        build(data, Clock::new())
-    });
+    let connector =
+        tracing::subscriber::with_default(CrlErrorEvents(errors.clone(), B::LOG_TARGET), || {
+            build::<B>(data)
+        });
     (connector, errors.load(Ordering::Relaxed))
 }
 
-fn server_config(chain: &[&rcgen::Certificate], key: &KeyPair) -> Arc<ServerConfig> {
+pub(super) fn server_config(chain: &[&rcgen::Certificate], key: &KeyPair) -> Arc<ServerConfig> {
     Arc::new(
         ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
             .with_safe_default_protocol_versions()
@@ -150,22 +167,39 @@ fn server_config(chain: &[&rcgen::Certificate], key: &KeyPair) -> Arc<ServerConf
     )
 }
 
-async fn handshake(
-    connector: &tonic_tls_xds::rustls::TlsConnector,
+async fn handshake<B: TestBackend>(
+    connector: &Pair<B>,
     server: Arc<ServerConfig>,
 ) -> Result<(), tonic_tls::Error> {
     let (client_io, server_io) = tokio::io::duplex(16 * 1024);
     let acceptor = tokio_rustls::TlsAcceptor::from(server);
     let (client, server) = tokio::time::timeout(Duration::from_secs(5), async {
         tokio::join!(
-            tonic_tls::TlsConnector::connect(connector, "localhost".try_into().unwrap(), client_io),
+            tonic_tls::TlsConnector::<tokio::io::DuplexStream>::connect(
+                &connector.0,
+                connector.1.clone(),
+                client_io
+            ),
             acceptor.accept(server_io),
         )
     })
     .await
     .expect("TLS handshake stalled");
-    let _stream = client?;
-    server.expect("server handshake must succeed when the client accepts it");
+    let mut client = client?;
+    let mut server = server.expect("server handshake must succeed when the client accepts it");
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    tokio::time::timeout(Duration::from_secs(5), async {
+        client.write_all(b"ping").await.unwrap();
+        let mut bytes = [0; 4];
+        server.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"ping");
+        server.write_all(b"pong").await.unwrap();
+        server.flush().await.unwrap();
+        client.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(&bytes, b"pong");
+    })
+    .await
+    .expect("TLS exchange stalled");
     Ok(())
 }
 
@@ -187,16 +221,12 @@ fn certificate_error(error: &tonic_tls::Error) -> &CertificateError {
     error
 }
 
-#[test]
-fn rustls_crls_reject_invalid_material_at_construction() {
+fn crls_reject_invalid_material_at_construction<B: TestBackend>() {
     let issuer = ca("root");
     let good = crl(&issuer, &[]);
     let malformed = b"-----BEGIN X509 CRL-----\n!\n-----END X509 CRL-----\n".to_vec();
     let endpoint = Endpoint::from_static("https://localhost");
-    let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
-        Arc::new(config(Clock::new())),
-        "localhost".try_into().unwrap(),
-    );
+    let factory = B::factory(&[], None);
     for (name, crls) in [
         ("empty collection", Vec::new()),
         ("empty file", vec![Vec::new()]),
@@ -229,8 +259,7 @@ fn rustls_crls_reject_invalid_material_at_construction() {
     }
 }
 
-#[tokio::test]
-async fn rustls_crls_check_leaf_and_intermediate_with_separate_files_or_bundle() {
+async fn crls_check_leaf_and_intermediate_with_separate_files_or_bundle<B: TestBackend>() {
     let root = ca("root");
     let intermediate = CertifiedIssuer::signed_by(
         ca_params("intermediate", 2),
@@ -256,42 +285,46 @@ async fn rustls_crls_check_leaf_and_intermediate_with_separate_files_or_bundle()
         (
             "revoked leaf",
             vec![root_crl.clone(), crl(&intermediate, &[3])],
-            Some(CertificateError::Revoked),
+            Some(VerificationFailure::Revoked),
         ),
         (
             "revoked intermediate",
             vec![crl(&root, &[2]), intermediate_crl.clone()],
-            Some(CertificateError::Revoked),
+            Some(VerificationFailure::Revoked),
         ),
         (
             "missing leaf issuer CRL",
             vec![root_crl],
-            Some(CertificateError::UnknownRevocationStatus),
+            Some(VerificationFailure::UnknownRevocationStatus),
         ),
         (
             "missing intermediate issuer CRL",
             vec![intermediate_crl.clone()],
-            Some(CertificateError::UnknownRevocationStatus),
+            Some(VerificationFailure::UnknownRevocationStatus),
         ),
         (
             "trust anchor excluded",
-            vec![crl(&root, &[1]), intermediate_crl],
+            vec![crl(&root, &[1]), intermediate_crl.clone()],
             None,
         ),
     ] {
-        let connector = build(&snapshot(&root, crls), Clock::new());
+        let connector = build::<B>(&snapshot(&root, crls));
         match expected {
-            None => handshake(&connector, server.clone()).await.unwrap(),
+            None => handshake::<B>(&connector, server.clone()).await.unwrap(),
             Some(expected) => {
-                let error = handshake(&connector, server.clone()).await.unwrap_err();
-                assert_eq!(certificate_error(&error), &expected, "{name}: {error}");
+                let error = handshake::<B>(&connector, server.clone())
+                    .await
+                    .err()
+                    .unwrap_or_else(|| panic!("{name} must fail certificate verification"));
+                B::assert_verification_error(&error, expected);
             }
         }
     }
+    let connector = build::<B>(&snapshot(&intermediate, vec![intermediate_crl]));
+    handshake::<B>(&connector, server).await.unwrap();
 }
 
-#[tokio::test]
-async fn rustls_static_crls_keep_first_per_issuer_and_log_duplicates() {
+async fn static_crls_keep_first_per_issuer_and_log_duplicates<B: TestBackend>() {
     let issuer = ca("root");
     let other = ca("other root");
     let (cert, key) = server_cert(&issuer);
@@ -300,7 +333,7 @@ async fn rustls_static_crls_keep_first_per_issuer_and_log_duplicates() {
     let revoked = crl(&issuer, &[3]);
     let unrelated = crl(&other, &[]);
     let (_, errors) =
-        build_with_error_count(&snapshot(&issuer, vec![clear.clone(), unrelated.clone()]));
+        build_with_error_count::<B>(&snapshot(&issuer, vec![clear.clone(), unrelated.clone()]));
     assert_eq!(errors, 0);
     for (first, last, expected_revoked) in [(&clear, &revoked, false), (&revoked, &clear, true)] {
         for bundles in [
@@ -309,14 +342,11 @@ async fn rustls_static_crls_keep_first_per_issuer_and_log_duplicates() {
         ] {
             let data = snapshot(&issuer, bundles);
             assert_eq!(data.crl_selection(), CrlSelection::FirstPerIssuer);
-            let (connector, errors) = build_with_error_count(&data);
+            let (connector, errors) = build_with_error_count::<B>(&data);
             assert_eq!(errors, 1, "static duplicates must emit an ERROR");
-            let result = handshake(&connector, server.clone()).await;
+            let result = handshake::<B>(&connector, server.clone()).await;
             if expected_revoked {
-                assert_eq!(
-                    certificate_error(&result.unwrap_err()),
-                    &CertificateError::Revoked
-                );
+                B::assert_verification_error(&result.unwrap_err(), VerificationFailure::Revoked);
             } else {
                 result.unwrap();
             }
@@ -324,41 +354,43 @@ async fn rustls_static_crls_keep_first_per_issuer_and_log_duplicates() {
     }
 }
 
-#[tokio::test]
-async fn rustls_duplicate_crls_do_not_fall_back_after_signature_failure() {
+async fn duplicate_crls_do_not_fall_back_after_signature_failure<B: TestBackend>() {
     let issuer = ca("root");
     let impostor = ca("root");
     let (cert, key) = server_cert(&issuer);
-    let (connector, errors) = build_with_error_count(&snapshot(
-        &issuer,
-        vec![crl(&impostor, &[]), crl(&issuer, &[])],
-    ));
-    assert_eq!(
-        errors, 1,
-        "selection must use issuer, not signing-key identity"
-    );
-    let error = handshake(&connector, server_config(&[&cert], &key))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        tls_error(&error),
-        &rustls::Error::InvalidCertRevocationList(rustls::CertRevocationListError::BadSignature),
-    );
+    let clear = crl(&issuer, &[]);
+    let mut der = openssl::x509::X509Crl::from_pem(&clear)
+        .unwrap()
+        .to_der()
+        .unwrap();
+    *der.last_mut().unwrap() ^= 1;
+    let bad_signature = openssl::x509::X509Crl::from_der(&der)
+        .unwrap()
+        .to_pem()
+        .unwrap();
+    for bad in [crl(&impostor, &[]), bad_signature] {
+        let (connector, errors) =
+            build_with_error_count::<B>(&snapshot(&issuer, vec![bad, clear.clone()]));
+        assert_eq!(
+            errors, 1,
+            "selection must use issuer, not signing-key identity"
+        );
+        let error = handshake::<B>(&connector, server_config(&[&cert], &key))
+            .await
+            .unwrap_err();
+        B::assert_verification_error(&error, VerificationFailure::CrlSignature);
+    }
 }
 
-#[tokio::test]
-async fn rustls_crls_reject_wrong_signing_key() {
+async fn crls_reject_wrong_signing_key<B: TestBackend>() {
     let issuer = ca("root");
     let impostor = ca("root");
     let (cert, key) = server_cert(&issuer);
-    let connector = build(&snapshot(&issuer, vec![crl(&impostor, &[])]), Clock::new());
-    let error = handshake(&connector, server_config(&[&cert], &key))
+    let connector = build::<B>(&snapshot(&issuer, vec![crl(&impostor, &[])]));
+    let error = handshake::<B>(&connector, server_config(&[&cert], &key))
         .await
         .unwrap_err();
-    assert_eq!(
-        tls_error(&error),
-        &rustls::Error::InvalidCertRevocationList(rustls::CertRevocationListError::BadSignature),
-    );
+    B::assert_verification_error(&error, VerificationFailure::CrlSignature);
 }
 
 #[tokio::test]
@@ -367,10 +399,12 @@ async fn rustls_crl_expiry_is_checked_without_rebuilding_connector() {
     let (cert, key) = server_cert(&issuer);
     let server = server_config(&[&cert], &key);
     let clock = Clock::new();
-    let connector = build(&snapshot(&issuer, vec![crl(&issuer, &[])]), clock.clone());
-    handshake(&connector, server.clone()).await.unwrap();
+    let connector = build_with_clock(&snapshot(&issuer, vec![crl(&issuer, &[])]), clock.clone());
+    handshake::<Rustls>(&connector, server.clone())
+        .await
+        .unwrap();
     clock.set_year(2031);
-    let error = handshake(&connector, server).await.unwrap_err();
+    let error = handshake::<Rustls>(&connector, server).await.unwrap_err();
     assert!(
         matches!(
             certificate_error(&error),
@@ -397,7 +431,7 @@ enum CrlSourceKind {
     Directory,
 }
 
-async fn duplicate_crl_reload(source: CrlSourceKind) {
+async fn duplicate_crl_reload<B: TestBackend>(source: CrlSourceKind) {
     let issuer = ca("root");
     let (cert, key) = server_cert(&issuer);
     let server = server_config(&[&cert], &key);
@@ -451,33 +485,33 @@ async fn duplicate_crl_reload(source: CrlSourceKind) {
         .await;
         let data = provider.snapshot().unwrap();
         assert_eq!(data.crl_selection(), selection);
-        let (connector, errors) = build_with_error_count(&data);
+        let (connector, errors) = build_with_error_count::<B>(&data);
         assert_eq!(errors, error_count);
         let expected_revoked = match source {
             CrlSourceKind::File => first == &revoked,
             CrlSourceKind::Directory => last == &revoked,
         };
-        let result = handshake(&connector, server.clone()).await;
+        let result = handshake::<B>(&connector, server.clone()).await;
         if expected_revoked {
-            assert_eq!(
-                certificate_error(&result.unwrap_err()),
-                &CertificateError::Revoked
-            );
+            B::assert_verification_error(&result.unwrap_err(), VerificationFailure::Revoked);
         } else {
             result.unwrap();
         }
     }
 
     if matches!(source, CrlSourceKind::Directory) {
+        let retained = build::<B>(&provider.snapshot().unwrap());
         // Remove the later, non-revoking CRL; the remaining earlier CRL must now apply.
         std::fs::remove_file(directory.join("02.pem")).unwrap();
         wait_for_snapshot(&provider, "the remaining revoking CRL", |data| {
             data.crls() == Some(std::slice::from_ref(&revoked))
         })
         .await;
-        let connector = build(&provider.snapshot().unwrap(), Clock::new());
-        let error = handshake(&connector, server.clone()).await.unwrap_err();
-        assert_eq!(certificate_error(&error), &CertificateError::Revoked);
+        let connector = build::<B>(&provider.snapshot().unwrap());
+        let error = handshake::<B>(&connector, server.clone())
+            .await
+            .unwrap_err();
+        B::assert_verification_error(&error, VerificationFailure::Revoked);
 
         for (first, last) in [(&clear, &revoked), (&revoked, &clear)] {
             let bytes = [first.as_slice(), last.as_slice()].concat();
@@ -486,14 +520,11 @@ async fn duplicate_crl_reload(source: CrlSourceKind) {
                 data.crls() == Some(std::slice::from_ref(&bytes))
             })
             .await;
-            let (connector, errors) = build_with_error_count(&provider.snapshot().unwrap());
+            let (connector, errors) = build_with_error_count::<B>(&provider.snapshot().unwrap());
             assert_eq!(errors, 0);
-            let result = handshake(&connector, server.clone()).await;
+            let result = handshake::<B>(&connector, server.clone()).await;
             if last == &revoked {
-                assert_eq!(
-                    certificate_error(&result.unwrap_err()),
-                    &CertificateError::Revoked
-                );
+                B::assert_verification_error(&result.unwrap_err(), VerificationFailure::Revoked);
             } else {
                 result.unwrap();
             }
@@ -506,29 +537,21 @@ async fn duplicate_crl_reload(source: CrlSourceKind) {
             data.crls() == Some(&[malformed.clone(), clear.clone()])
         })
         .await;
-        let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
-            Arc::new(config(Clock::new())),
-            "localhost".try_into().unwrap(),
-        );
         assert!(
-            tonic_tls_xds::TlsConnectorFactory::<tokio::io::DuplexStream>::build_connector(
-                &factory,
-                &provider.snapshot().unwrap(),
-            )
-            .is_err(),
+            try_build::<B>(&provider.snapshot().unwrap()).is_err(),
             "a malformed earlier CRL must fail construction, not be hidden by last-wins selection",
         );
+        std::fs::remove_file(directory.join("01.pem")).unwrap();
+        std::fs::remove_file(directory.join("02.pem")).unwrap();
+        wait_for_snapshot(&provider, "the empty CRL directory", |data| {
+            data.crls() == Some(&[])
+        })
+        .await;
+        assert!(try_build::<B>(&provider.snapshot().unwrap()).is_err());
+        handshake::<B>(&retained, server.clone()).await.unwrap();
+        let no_crls = CertificateData::new(Some(issuer.pem().into_bytes()), None, None).unwrap();
+        handshake::<B>(&build::<B>(&no_crls), server).await.unwrap();
     }
-}
-
-#[tokio::test]
-async fn rustls_crl_file_duplicates_keep_first_on_reload() {
-    duplicate_crl_reload(CrlSourceKind::File).await;
-}
-
-#[tokio::test]
-async fn rustls_crl_directory_duplicates_keep_last_on_reload() {
-    duplicate_crl_reload(CrlSourceKind::Directory).await;
 }
 
 enum IdentitySource {
@@ -536,7 +559,10 @@ enum IdentitySource {
     BaseConfig,
 }
 
-async fn crl_rotation_on_channel_reconnect(source: CrlSourceKind, identity_source: IdentitySource) {
+async fn crl_rotation_on_channel_reconnect<B: TestBackend>(
+    source: CrlSourceKind,
+    identity_source: IdentitySource,
+) {
     let issuer = ca("root");
     let (server, server_key) = server_cert(&issuer);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
@@ -553,7 +579,7 @@ async fn crl_rotation_on_channel_reconnect(source: CrlSourceKind, identity_sourc
     std::fs::write(&cert, client_cert.pem()).unwrap();
     std::fs::write(&key, client_key.serialize_pem()).unwrap();
     std::fs::write(&path, &good).unwrap();
-    let mut base = config(Clock::new());
+    let mut base_identity = None;
     let mut watcher_config = FileWatcherConfig::default()
         .with_ca_certificate_file(roots)
         .with_crl_source(match source {
@@ -566,13 +592,7 @@ async fn crl_rotation_on_channel_reconnect(source: CrlSourceKind, identity_sourc
             watcher_config = watcher_config.with_identity_files(cert, key);
         }
         IdentitySource::BaseConfig => {
-            let key = rustls::sign::CertifiedKey::from_der(
-                vec![client_cert.der().clone()],
-                PrivateKeyDer::from_pem_slice(client_key.serialize_pem().as_bytes()).unwrap(),
-                base.crypto_provider(),
-            )
-            .unwrap();
-            base.client_auth_cert_resolver = Arc::new(rustls::sign::SingleCertAndKey::from(key));
+            base_identity = Some(identity(&client_cert, &client_key));
         }
     }
     let provider = Arc::new(CountingProvider {
@@ -582,7 +602,7 @@ async fn crl_rotation_on_channel_reconnect(source: CrlSourceKind, identity_sourc
     let (first_tx, first_rx) = oneshot::channel();
     let (endpoint, shutdown, task) =
         start_server(&server, &server_key, &[&client_cert], Some(first_tx)).await;
-    let connector = connector(&endpoint, base, provider.clone());
+    let connector = connector::<B>(&endpoint, B::factory(&[], base_identity), provider.clone());
     let channel = endpoint
         .connect_with_connector(connector.clone())
         .await
@@ -661,12 +681,66 @@ async fn crl_rotation_on_channel_reconnect(source: CrlSourceKind, identity_sourc
     task.await.unwrap();
 }
 
-#[tokio::test]
-async fn rustls_crl_file_rotation_with_provider_identity() {
-    crl_rotation_on_channel_reconnect(CrlSourceKind::File, IdentitySource::Provider).await;
+macro_rules! crl_tests {
+    ($module:ident, $backend:ty) => {
+        mod $module {
+            use super::*;
+
+            #[test]
+            fn invalid_material_fails_at_construction() {
+                crls_reject_invalid_material_at_construction::<$backend>();
+            }
+
+            #[tokio::test]
+            async fn checks_full_chain_and_excludes_anchor() {
+                crls_check_leaf_and_intermediate_with_separate_files_or_bundle::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn static_duplicates_keep_first_and_log() {
+                static_crls_keep_first_per_issuer_and_log_duplicates::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn duplicates_do_not_fall_back_after_signature_failure() {
+                duplicate_crls_do_not_fall_back_after_signature_failure::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn rejects_wrong_signing_key() {
+                crls_reject_wrong_signing_key::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn file_duplicates_keep_first_on_reload() {
+                duplicate_crl_reload::<$backend>(CrlSourceKind::File).await;
+            }
+
+            #[tokio::test]
+            async fn directory_duplicates_keep_last_on_reload() {
+                duplicate_crl_reload::<$backend>(CrlSourceKind::Directory).await;
+            }
+
+            #[tokio::test]
+            async fn file_rotation_with_provider_identity() {
+                crl_rotation_on_channel_reconnect::<$backend>(
+                    CrlSourceKind::File,
+                    IdentitySource::Provider,
+                )
+                .await;
+            }
+
+            #[tokio::test]
+            async fn directory_rotation_preserves_base_identity() {
+                crl_rotation_on_channel_reconnect::<$backend>(
+                    CrlSourceKind::Directory,
+                    IdentitySource::BaseConfig,
+                )
+                .await;
+            }
+        }
+    };
 }
 
-#[tokio::test]
-async fn rustls_crl_directory_rotation_preserves_base_identity() {
-    crl_rotation_on_channel_reconnect(CrlSourceKind::Directory, IdentitySource::BaseConfig).await;
-}
+crl_tests!(rustls_crls, Rustls);
+crl_tests!(openssl_crls, OpenSsl);

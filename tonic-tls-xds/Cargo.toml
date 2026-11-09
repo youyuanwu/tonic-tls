@@ -13,7 +13,7 @@ keywords = ["gRPC", "tls", "tonic", "xds"]
 readme = "README.md"
 
 [dependencies]
-tonic-tls = { version = "0.8.0", path = "../tonic-tls", default-features = false }
+tonic-tls.workspace = true
 tokio = { workspace = true, features = ["fs", "rt", "time"] }
 tonic.workspace = true
 tower.workspace = true
@@ -21,11 +21,17 @@ hyper-util.workspace = true
 futures.workspace = true
 tracing.workspace = true
 tokio-rustls = { workspace = true, optional = true }
-webpki = { package = "rustls-webpki", version = "0.103", optional = true }
+webpki = { workspace = true, optional = true }
+openssl = { workspace = true, optional = true }
+tokio-openssl = { workspace = true, optional = true }
+openssl-sys = { workspace = true, optional = true }
+foreign-types = { workspace = true, optional = true }
+pki-types = { workspace = true, features = ["std"], optional = true }
 
 [features]
 default = []
 rustls = ["dep:tokio-rustls", "dep:webpki"]
+openssl = ["dep:openssl", "dep:tokio-openssl", "dep:openssl-sys", "dep:foreign-types", "dep:pki-types"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

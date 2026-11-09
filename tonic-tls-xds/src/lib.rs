@@ -7,6 +7,7 @@
 //! validating their certificate contents.
 //!
 //! Enable the `rustls` feature for the built-in `rustls::TlsConnectorFactory`.
+//! Enable `openssl` for `openssl::TlsConnectorFactory` (OpenSSL 1.1.1 or newer).
 //! The provider, file watcher, and generic connector require no TLS backend feature.
 //! This crate does not implement the xDS discovery protocol.
 
@@ -19,3 +20,6 @@ pub use reloadable_tls_connector::{ConnectorPair, ReloadableTlsConnector, TlsCon
 
 #[cfg(feature = "rustls")]
 pub mod rustls;
+
+#[cfg(feature = "openssl")]
+pub mod openssl;

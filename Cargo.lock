@@ -1553,6 +1553,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-native-tls",
+ "tokio-openssl",
  "tokio-rustls",
  "tokio-schannel",
  "tokio-stream",
@@ -1569,11 +1570,16 @@ dependencies = [
 name = "tonic-tls-xds"
 version = "0.1.0"
 dependencies = [
+ "foreign-types",
  "futures",
  "hyper-util",
+ "openssl",
+ "openssl-sys",
+ "rustls-pki-types",
  "rustls-webpki",
  "tempfile",
  "tokio",
+ "tokio-openssl",
  "tokio-rustls",
  "tonic",
  "tonic-tls",
