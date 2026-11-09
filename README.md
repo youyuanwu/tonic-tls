@@ -53,7 +53,7 @@ async fn connect_tonic_channel(
 
 The companion [tonic-tls-xds](./tonic-tls-xds/) crate provides backend-neutral
 certificate snapshots, a reloadable client connector, and async PEM file watching.
-Enable its `rustls` feature for the built-in certificate factory.
+Enable its `rustls` or `openssl` feature for certificate, CA, and CRL rotation.
 
 The existing non-rotating connectors remain in `tonic-tls`.
 See [Certificate rotation](./docs/Cert-rotation.md) for server-side examples.

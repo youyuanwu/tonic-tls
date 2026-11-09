@@ -23,11 +23,12 @@ tonic-prost.workspace = true
 tokio = { workspace = true }
 rustls = {workspace =  true, features = ["std", "ring"]}
 tokio-rustls.workspace = true
+tokio-openssl.workspace = true
 rcgen.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
-tonic-tls = { workspace = true }
-tonic-tls-xds = { workspace = true, features = ["rustls"] }
+tonic-tls = { workspace = true, features = ["openssl-ktls", "native", "rustls", "openssl", "schannel"] }
+tonic-tls-xds = { workspace = true, features = ["rustls", "openssl"] }
 futures.workspace = true
 tokio-native-tls.workspace = true
 native-tls.workspace = true

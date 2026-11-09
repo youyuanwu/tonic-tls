@@ -15,10 +15,11 @@ pub enum CrlSelection {
     LastPerIssuer,
 }
 
-/// A PEM-encoded certificate chain and its private key.
+/// A PEM-encoded certificate chain and its unencrypted private key.
 ///
 /// Construction does not validate the material. TLS backends validate it before
 /// use. Publish the certificate and key together to avoid half-applied updates.
+/// Password-protected keys are not supported; backends must not prompt for passwords.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Identity {
     cert_chain: PemBytes,
@@ -38,7 +39,7 @@ impl Identity {
         &self.cert_chain
     }
 
-    /// PEM-encoded private key.
+    /// Unencrypted PEM-encoded private key.
     pub fn key(&self) -> &[u8] {
         &self.key
     }

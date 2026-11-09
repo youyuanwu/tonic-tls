@@ -5,6 +5,7 @@ use crate::{
     tests::{create_listener_server, make_test_cert},
 };
 use arc_swap::ArcSwap;
+use backend::{CountingFactory, OpenSsl, Rustls, TestBackend};
 use futures::Stream;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig,
@@ -14,7 +15,7 @@ use rustls::{
 use std::{
     net::{Shutdown, TcpStream},
     pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     task::{Context, Poll},
     time::Duration,
 };
@@ -193,19 +194,15 @@ async fn start_server(
     (endpoint, shutdown, task)
 }
 
-fn connector(
+fn connector<B: TestBackend>(
     endpoint: &Endpoint,
-    base: ClientConfig,
+    factory: B::Factory,
     provider: Arc<dyn CertificateProvider>,
-) -> tonic_tls_xds::ReloadableTlsConnector<tokio::net::TcpStream, tonic_tls_xds::rustls::TlsConnector>
-{
+) -> tonic_tls_xds::ReloadableTlsConnector<tokio::net::TcpStream, B::Connector> {
     tonic_tls_xds::ReloadableTlsConnector::new(
         tonic_tls::TcpTransport::from_endpoint(endpoint),
         provider,
-        tonic_tls_xds::rustls::TlsConnectorFactory::new(
-            Arc::new(base),
-            "localhost".try_into().unwrap(),
-        ),
+        factory,
     )
     .unwrap()
 }
@@ -259,8 +256,7 @@ async fn await_peer_identity(
     );
 }
 
-#[tokio::test]
-async fn rustls_client_identity_rotates_on_channel_reconnect() {
+async fn client_identity_rotates_on_channel_reconnect<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (first, first_key) = make_test_cert(vec!["client-1".into()]);
     let (second, second_key) = make_test_cert(vec!["client-2".into()]);
@@ -275,7 +271,7 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
     let provider = TestProvider::new(
         CertificateData::new(None, Some(identity(&first, &first_key)), None).unwrap(),
     );
-    let connector = connector(&endpoint, base_config(&[&server]), provider.clone());
+    let connector = connector::<B>(&endpoint, B::factory(&[&server], None), provider.clone());
     let channel = endpoint.connect_with_connector(connector).await.unwrap();
     let mut client = helloworld::greeter_client::GreeterClient::new(channel);
     assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
@@ -295,8 +291,7 @@ async fn rustls_client_identity_rotates_on_channel_reconnect() {
     task.await.unwrap();
 }
 
-#[tokio::test]
-async fn rustls_client_file_watcher_rotates_identity() {
+async fn client_file_watcher_rotates_identity<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (first, first_key) = make_test_cert(vec!["client-1".into()]);
     let (second, second_key) = make_test_cert(vec!["client-2".into()]);
@@ -305,12 +300,10 @@ async fn rustls_client_file_watcher_rotates_identity() {
     let key_path = dir.path().join("client.key");
     std::fs::write(&cert_path, b"").unwrap();
     std::fs::write(&key_path, first_key.serialize_pem()).unwrap();
+    let (tx, rx) = oneshot::channel();
     let (endpoint, shutdown, task) =
-        start_server(&server, &server_key, &[&first, &second], None).await;
-    let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
-        Arc::new(base_config(&[&server])),
-        "localhost".try_into().unwrap(),
-    );
+        start_server(&server, &server_key, &[&first, &second], Some(tx)).await;
+    let factory = B::factory(&[&server], None);
     let provider = Arc::new(
         tonic_tls_xds::FileWatcherProvider::new(tonic_tls_xds::FileWatcherConfig {
             certificate_file: Some(cert_path.clone()),
@@ -330,10 +323,7 @@ async fn rustls_client_file_watcher_rotates_identity() {
     )
     .err()
     .expect("connector construction must reject an empty identity chain");
-    assert!(matches!(
-        error.downcast_ref::<rustls::Error>(),
-        Some(rustls::Error::NoCertificatesPresented),
-    ));
+    B::assert_empty_identity(&error);
 
     std::fs::write(&cert_path, first.pem()).unwrap();
     let expected = identity(&first, &first_key);
@@ -341,10 +331,14 @@ async fn rustls_client_file_watcher_rotates_identity() {
         data.identity() == Some(&expected)
     })
     .await;
+    let builds = Arc::new(AtomicUsize::new(0));
     let connector = tonic_tls_xds::ReloadableTlsConnector::new(
         tonic_tls::TcpTransport::from_endpoint(&endpoint),
         provider.clone(),
-        factory,
+        CountingFactory {
+            inner: factory,
+            builds: builds.clone(),
+        },
     )
     .unwrap();
     let channel = endpoint
@@ -353,6 +347,19 @@ async fn rustls_client_file_watcher_rotates_identity() {
         .unwrap();
     let mut client = helloworld::greeter_client::GreeterClient::new(channel);
     assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
+    let first_connection = rx.await.unwrap();
+    let channel = endpoint
+        .connect_with_connector(connector.clone())
+        .await
+        .unwrap();
+    let mut other = helloworld::greeter_client::GreeterClient::new(channel);
+    assert_eq!(peer_identity(&mut other).await.unwrap(), "0");
+    drop(other);
+    assert_eq!(
+        builds.load(Ordering::Relaxed),
+        1,
+        "unchanged snapshots must reuse the connector"
+    );
 
     // A half-applied update is published, but cannot fall back to the cached pair.
     std::fs::write(&cert_path, second.pem()).unwrap();
@@ -368,8 +375,6 @@ async fn rustls_client_file_watcher_rotates_identity() {
             .is_err()
     );
     assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
-    drop(client);
-
     // Wait for both files, then confirm the actual peer identity after recovery.
     std::fs::write(&key_path, second_key.serialize_pem()).unwrap();
     let expected = identity(&second, &second_key);
@@ -377,9 +382,9 @@ async fn rustls_client_file_watcher_rotates_identity() {
         data.identity() == Some(&expected)
     })
     .await;
-    let channel = endpoint.connect_with_connector(connector).await.unwrap();
-    let mut client = helloworld::greeter_client::GreeterClient::new(channel);
-    assert_eq!(peer_identity(&mut client).await.unwrap(), "1");
+    first_connection.shutdown(Shutdown::Both).unwrap();
+    drop(first_connection);
+    await_peer_identity(&mut client, "1").await;
     drop(client);
     drop(provider);
     shutdown.cancel();
@@ -387,8 +392,7 @@ async fn rustls_client_file_watcher_rotates_identity() {
 }
 
 // Trust must switch servers without changing the client's mTLS identity.
-#[tokio::test]
-async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
+async fn client_provider_rotates_roots_and_preserves_base_identity<B: TestBackend>() {
     let (server1, server1_key) = make_test_cert(vec!["localhost".into()]);
     let (server2, server2_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
@@ -396,18 +400,11 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
         start_server(&server1, &server1_key, &[&client_cert], None).await;
     let (endpoint2, shutdown2, task2) =
         start_server(&server2, &server2_key, &[&client_cert], None).await;
-    let mut base = base_config(&[]);
-    let key = rustls::sign::CertifiedKey::from_der(
-        vec![client_cert.der().clone()],
-        PrivateKeyDer::from_pem_slice(client_key.serialize_pem().as_bytes()).unwrap(),
-        base.crypto_provider(),
-    )
-    .unwrap();
-    base.client_auth_cert_resolver = Arc::new(rustls::sign::SingleCertAndKey::from(key));
+    let factory = B::factory(&[&server2], Some(identity(&client_cert, &client_key)));
     let provider = TestProvider::new(
         CertificateData::new(Some(server1.pem().into_bytes()), None, None).unwrap(),
     );
-    let connector = connector(&endpoint1, base, provider.clone());
+    let connector = connector::<B>(&endpoint1, factory, provider.clone());
 
     let channel = endpoint1
         .connect_with_connector(connector.clone())
@@ -415,13 +412,31 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
         .unwrap();
     let mut client = helloworld::greeter_client::GreeterClient::new(channel);
     assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
-    drop(client);
     assert!(
         endpoint2
             .connect_with_connector(connector.clone())
             .await
             .is_err()
     );
+
+    provider.fail.store(true, Ordering::Relaxed);
+    assert!(
+        endpoint1
+            .connect_with_connector(connector.clone())
+            .await
+            .is_err()
+    );
+    provider.fail.store(false, Ordering::Relaxed);
+    provider.data.store(Arc::new(
+        CertificateData::new(Some(b"bad roots".to_vec()), None, None).unwrap(),
+    ));
+    assert!(
+        endpoint1
+            .connect_with_connector(connector.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
 
     provider.data.store(Arc::new(
         CertificateData::new(Some(server2.pem().into_bytes()), None, None).unwrap(),
@@ -430,10 +445,12 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
         .connect_with_connector(connector.clone())
         .await
         .unwrap();
-    let mut client = helloworld::greeter_client::GreeterClient::new(channel);
-    assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
+    let mut second_client = helloworld::greeter_client::GreeterClient::new(channel);
+    assert_eq!(peer_identity(&mut second_client).await.unwrap(), "0");
     assert!(endpoint1.connect_with_connector(connector).await.is_err());
+    assert_eq!(peer_identity(&mut client).await.unwrap(), "0");
     drop(client);
+    drop(second_client);
     shutdown1.cancel();
     shutdown2.cancel();
     task1.await.unwrap();
@@ -441,8 +458,7 @@ async fn rustls_client_provider_rotates_roots_and_preserves_base_identity() {
 }
 
 // Prime the cache, reject unavailable/invalid snapshots, then verify recovery.
-#[tokio::test]
-async fn rustls_client_provider_errors_do_not_fall_back_to_cached_credentials() {
+async fn client_provider_errors_do_not_fall_back_to_cached_credentials<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint, shutdown, task) =
@@ -456,7 +472,7 @@ async fn rustls_client_provider_errors_do_not_fall_back_to_cached_credentials() 
         .unwrap(),
     );
     let good = provider.data.load_full();
-    let connector = connector(&endpoint, base_config(&[&server]), provider.clone());
+    let connector = connector::<B>(&endpoint, B::factory(&[&server], None), provider.clone());
     let channel = endpoint
         .connect_with_connector(connector.clone())
         .await
@@ -502,14 +518,20 @@ async fn rustls_client_provider_errors_do_not_fall_back_to_cached_credentials() 
 }
 
 // Construction checks parsing and key pairing without opening sockets.
-#[test]
-fn rustls_client_connector_rejects_invalid_material_at_construction() {
+fn client_connector_rejects_invalid_material_at_construction<B: TestBackend>() {
     let (cert, key) = make_test_cert(vec!["client".into()]);
     let wrong_key = rcgen::KeyPair::generate().unwrap();
     let endpoint = Endpoint::from_static("https://localhost");
-    let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
-        Arc::new(base_config(&[])),
-        "localhost".try_into().unwrap(),
+    let factory = B::factory(&[&cert], None);
+    let valid = CertificateData::new(None, Some(identity(&cert, &key)), None).unwrap();
+    assert!(
+        tonic_tls_xds::ReloadableTlsConnector::new(
+            tonic_tls::TcpTransport::from_endpoint(&endpoint),
+            TestProvider::new(valid),
+            factory.clone(),
+        )
+        .is_ok(),
+        "valid identity-only material must construct with the same base roots",
     );
 
     for (name, data) in [
@@ -628,5 +650,43 @@ fn rustls_client_factory_rejects_empty_chain_with_unknown_key_consistency() {
     ));
 }
 
+macro_rules! rotation_tests {
+    ($module:ident, $backend:ty) => {
+        mod $module {
+            use super::*;
+
+            #[tokio::test]
+            async fn identity_rotates_on_channel_reconnect() {
+                client_identity_rotates_on_channel_reconnect::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn file_watcher_rotates_identity() {
+                client_file_watcher_rotates_identity::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn roots_rotate_preserving_base_identity() {
+                client_provider_rotates_roots_and_preserves_base_identity::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn provider_errors_do_not_fall_back() {
+                client_provider_errors_do_not_fall_back_to_cached_credentials::<$backend>().await;
+            }
+
+            #[test]
+            fn invalid_material_fails_at_construction() {
+                client_connector_rejects_invalid_material_at_construction::<$backend>();
+            }
+        }
+    };
+}
+
+rotation_tests!(rustls_rotation, Rustls);
+rotation_tests!(openssl_rotation, OpenSsl);
+
+mod backend;
 mod crl_tests;
+mod openssl_tests;
 mod raw_tcp_tests;

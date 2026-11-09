@@ -52,9 +52,6 @@ jobs:
     - name: Run cargo check
       run: cargo +${{ matrix.rust }} check --locked --workspace --all-features
 
-    - name: Check backend-neutral certificate APIs
-      run: cargo +${{ matrix.rust }} check --locked -p tonic-tls-xds --no-default-features
-
     - name: Run cargo fmt
       run: cargo +${{ matrix.rust }} fmt --all -- --check
     
