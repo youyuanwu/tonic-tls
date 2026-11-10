@@ -7,7 +7,7 @@ license = "MIT"
 authors = ["youyuanwu@outlook.com"]
 repository = "https://github.com/youyuanwu/tonic-tls"
 documentation = "https://docs.rs/tonic-tls-xds"
-description = "Certificate providers and reloadable TLS connectors for tonic."
+description = "Certificate providers and reloadable TLS connectors and acceptors for tonic."
 categories = ["web-programming", "network-programming"]
 keywords = ["gRPC", "tls", "tonic", "xds"]
 readme = "README.md"
@@ -30,7 +30,7 @@ pki-types = { workspace = true, features = ["std"], optional = true }
 
 [features]
 default = []
-rustls = ["dep:tokio-rustls", "dep:webpki"]
+rustls = ["dep:tokio-rustls", "dep:webpki", "tokio-rustls/tls12", "tonic-tls/rustls"]
 openssl = ["dep:openssl", "dep:tokio-openssl", "dep:openssl-sys", "dep:foreign-types", "dep:pki-types"]
 
 [dev-dependencies]

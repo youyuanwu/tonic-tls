@@ -28,6 +28,8 @@ use tonic::{
 };
 use tonic_tls_xds::{CertificateData, CertificateProvider, Identity};
 
+mod server_tests;
+
 struct TestProvider {
     data: ArcSwap<CertificateData>,
     fail: AtomicBool,

@@ -219,7 +219,8 @@ async fn read_file(path: &Path) -> Result<PemBytes, tonic_tls::Error> {
 /// failures during refresh are logged at `WARN`; the last successfully read
 /// snapshot stays available. Unchanged bytes retain the same `Arc`, avoiding
 /// connector rebuilds. [`crate::ReloadableTlsConnector`] validates snapshots
-/// through its TLS factory before use. Readable but invalid updates therefore
+/// through its TLS factory before use; [`crate::ReloadableTlsAcceptor`] does
+/// the same for servers. Readable but invalid updates therefore
 /// fail new connection attempts rather than retaining older credentials.
 ///
 /// Share the provider using `Arc`. Dropping it aborts the polling task using

@@ -1,14 +1,18 @@
-//! Certificate providers and reloadable TLS connectors built on `tonic-tls`.
+//! Certificate providers and reloadable TLS connectors/acceptors built on `tonic-tls`.
 //!
 //! [`CertificateProvider`] supplies backend-neutral certificate and CRL PEM snapshots.
 //! [`ReloadableTlsConnector`] validates and caches connector/argument pairs using
 //! a [`TlsConnectorFactory`], refreshing them for new TLS handshakes.
+//! [`ReloadableTlsAcceptor`] does the same for servers using a [`TlsAcceptorFactory`].
 //! [`FileWatcherProvider`] polls PEM files and publishes changed snapshots without
 //! validating their certificate contents.
 //!
 //! Enable the `rustls` feature for the built-in `rustls::TlsConnectorFactory`.
+//! It also provides `rustls::TlsAcceptorFactory` for server identity, client CA,
+//! and client-certificate CRL rotation with [`ServerConfig`].
 //! Enable `openssl` for `openssl::TlsConnectorFactory` (OpenSSL 1.1.1 or newer).
-//! The provider, file watcher, and generic connector require no TLS backend feature.
+//! OpenSSL server rotation is not implemented.
+//! Providers and generic connector/acceptor APIs require no TLS backend feature.
 //! This crate does not implement the xDS discovery protocol.
 
 mod cert_provider;
@@ -17,6 +21,10 @@ mod file_watcher;
 pub use file_watcher::{CrlSource, FileWatcherConfig, FileWatcherProvider};
 mod reloadable_tls_connector;
 pub use reloadable_tls_connector::{ConnectorPair, ReloadableTlsConnector, TlsConnectorFactory};
+mod server_config;
+pub use server_config::{ClientAuth, ServerConfig};
+mod reloadable_tls_acceptor;
+pub use reloadable_tls_acceptor::{ReloadableTlsAcceptor, TlsAcceptorFactory};
 
 #[cfg(feature = "rustls")]
 pub mod rustls;
