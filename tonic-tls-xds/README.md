@@ -2,10 +2,13 @@
 
 Reload client certificates, trusted CAs, and certificate revocation lists (CRLs)
 without restarting your application or rebuilding a tonic channel.
+With rustls, also rotate server identities, trusted client CAs, and client CRLs
+without restarting the listener.
 
 This crate provides xDS-style certificate providers for
 [tonic-tls](../README.md), not the xDS discovery protocol. The built-in TLS
-adapters support **rustls** and **OpenSSL**.
+client adapters support **rustls** and **OpenSSL**. The built-in server adapter
+supports **rustls only**.
 
 ## Installation
 
@@ -124,6 +127,133 @@ Reads across multiple files are not atomic. Publish related files atomically
 where possible, or use a custom provider that validates a complete update before
 publishing it.
 
+## Server rotation (rustls)
+
+Reuse `FileWatcherProvider`, `CertificateProvider`, and `CertificateData` with
+`ReloadableTlsAcceptor`. One snapshot supplies the server's identity and the
+roots/CRLs used to authenticate **clients**. The server does not check its own
+identity against those client roots.
+
+Given a bound `tcp_incoming`, a tonic `greeter` service, and an explicit rustls
+`Arc<CryptoProvider>` named `crypto`:
+
+```rust
+use std::sync::Arc;
+use tonic_tls_xds::{
+    ClientAuth, CrlSource, FileWatcherConfig, FileWatcherProvider,
+    ReloadableTlsAcceptor, ServerConfig,
+};
+
+let files = FileWatcherConfig::default()
+    .with_identity_files("server.pem", "server.key")
+    .with_ca_certificate_file("client-ca.pem")
+    .with_crl_source(CrlSource::Directory("client-crls".into()));
+let provider = Arc::new(FileWatcherProvider::new(files).await?);
+let config = ServerConfig::default().with_client_auth(ClientAuth::Required);
+let factory = tonic_tls_xds::rustls::TlsAcceptorFactory::new(config, crypto);
+let acceptor = ReloadableTlsAcceptor::new(provider, factory)?;
+let incoming = acceptor.incoming(tcp_incoming);
+
+tonic::transport::Server::builder()
+    .add_service(greeter)
+    .serve_with_incoming(incoming)
+    .await?;
+```
+
+The `rustls` feature enables TLS 1.2 and TLS 1.3, but does not choose a crypto
+provider or install a process-wide default for you. The factory uses the explicit
+provider to build fresh native server configurations. Arbitrary native server
+configs, authentication callbacks, and protocol/cipher overrides are not accepted
+by the built-in factory.
+
+### Server settings and client authentication
+
+`ServerConfig` has private fields and these setters:
+
+| Method | Purpose | Default |
+|---|---|---|
+| `with_identity(identity)` | Base server chain and unencrypted key. | None; a snapshot identity is then required. |
+| `with_ca_certificates(pem)` | Base CAs trusted to authenticate clients. | None; no implicit system roots. |
+| `with_client_auth(policy)` | Whether to request/require client certificates. | `ClientAuth::Disabled`. |
+| `with_alpn_protocols(protocols)` | ALPN names in server preference order. | `h2`. |
+
+| Policy | No client certificate | Presented certificate |
+|---|---|---|
+| `Disabled` | Accepted; no certificate is requested. | Not used for authentication. Configured client roots/CRLs are errors. |
+| `Optional` | Accepted anonymously. | Must pass client-chain validation. |
+| `Required` | Rejected. | Must pass client-chain validation. |
+
+For server-authenticated TLS without mTLS, omit client roots/CRLs and leave
+`ClientAuth::Disabled`. `Optional` and `Required` require explicit nonempty
+effective client roots. Both validate signatures, chain validity, and applicable
+client-authentication usage; neither does hostname verification on clients.
+Explicitly trusted intermediate CAs may terminate a chain. CA-name hints come
+from the selected client trust bundle.
+
+Validation authenticates the peer; it does not authorize RPCs. Read certificates
+from `tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>` in request extensions
+and apply application identity/permission checks. Certificate SAN extraction
+requires parsing the exposed DER; no normalized principal API is provided.
+Tonic obtains connection info per connection and clones it into requests.
+Applications should evaluate current permissions per RPC.
+
+ALPN names must contain 1-255 bytes and the length-prefixed list must fit in
+65535 bytes. An empty list disables ALPN. With a nonempty configured list, an
+offered list without overlap fails negotiation; omission of ALPN is allowed.
+
+### Server snapshots and failures
+
+Snapshot identity replaces the **entire** server chain and key. Snapshot roots
+replace base client roots without merging. Omitted material uses the original
+base settings, never those of the previous snapshot. For example, an
+identity-only snapshot cannot retain roots/CRLs from a previous snapshot.
+
+CRLs are optional and require roots in the same snapshot. When supplied, the
+[CRL policy below](#crl-checking) applies to client leaves and intermediates,
+excluding the trust anchor: revoked certificates, unknown status, bad signatures,
+and expired CRLs fail the handshake. Omitted CRLs mean no revocation checking.
+Client trust, identity, and selected CRLs always come from one snapshot/base
+overlay; they are not sampled independently.
+
+`ReloadableTlsAcceptor::new` validates initial material without accepting IO.
+Each accept samples the provider when its future starts executing. Unchanged
+snapshot `Arc`s reuse the parsed acceptor; any changed snapshot, including a
+CRL-only update, builds a fresh complete configuration. Clones share that cache.
+Selection is serialized, but no cache lock is held during the TLS handshake.
+
+Provider/build failures reject new accepts without falling back to an old
+configuration or anonymous TLS. The incoming loop logs individual failures and
+continues accepting; later valid snapshots allow recovery. File-read failures
+retain the watcher's last successfully read snapshot, as on the client side;
+readable invalid contents are published and cause accepts to fail.
+
+All new connections perform full handshakes: stateful sessions, stateless
+tickets, and early data are disabled. CRL expiration is checked during each
+handshake even when the configuration is reused. Already-selected handshakes
+and established streams retain their configuration. Existing connections/RPCs
+are not revalidated or disconnected; bounded cutover requires application-managed
+connection retirement. Handshake concurrency, timeouts, and shutdown behavior
+remain those of the existing core incoming loop.
+
+### Raw server streams
+
+Use the same cache for raw Tokio IO by importing the core trait:
+
+```rust
+use tonic_tls::TlsAcceptor;
+
+let factory = tonic_tls_xds::rustls::TlsAcceptorFactory::new(config, crypto);
+let acceptor = tonic_tls_xds::ReloadableTlsAcceptor::new(provider, factory)?;
+let tls_stream = acceptor.accept(tcp_stream).await?;
+```
+
+For a single manually selected snapshot, use
+`tonic_tls_xds::rustls::TlsAcceptor::new(&config, &snapshot, crypto)`.
+The resulting streams use the existing core rustls wrapper and its `Connected`
+implementation. Custom transports can use `incoming` by implementing
+`tonic_tls::Incoming`. A custom `TlsAcceptorFactory` is responsible for preserving
+the identity, verification, CRL, and full-handshake guarantees.
+
 ## CRL checking
 
 Add a CRL file or directory to the watcher configuration:
@@ -146,7 +276,8 @@ file types fail the refresh. Keep unrelated files outside the CRL directory.
 
 When enabled, CRL checking:
 
-- Checks server certificates and intermediates, excluding the trust anchor.
+- Checks peer leaves and intermediates, excluding the trust anchor: server
+  certificates on client connectors, client certificates on server acceptors.
 - Rejects revoked certificates, unknown revocation status, and expired CRLs
   (`nextUpdate`). Supply an applicable CRL for each issuer in the checked chain.
 - Rejects empty directories, empty files, and malformed CRLs rather than
@@ -154,7 +285,8 @@ When enabled, CRL checking:
 - Applies additions, changes, and removals on subsequent connections. Expiry is
   checked at handshake time even if the CRL files have not changed.
 
-Both backends implement these rules. OpenSSL also rejects CRLs whose `thisUpdate`
+Both client backends and the rustls server backend implement these rules.
+OpenSSL also rejects CRLs whose `thisUpdate`
 is in the future and requires `nextUpdate`. It uses the current verification time
 and does not enable delta/indirect CRLs or flags that bypass time or
 critical-extension checks. Errors use the selected backend's native error types.
@@ -273,4 +405,5 @@ subsequent TLS handshake will succeed.
 
 - [API reference](https://docs.rs/tonic-tls-xds)
 - [Server certificate rotation](../docs/Cert-rotation.md)
+- [Provider-driven server rotation design](../docs/Server-cert-rotation-design.md)
 - [Custom TLS backend API](https://docs.rs/tonic-tls-xds/latest/tonic_tls_xds/trait.TlsConnectorFactory.html)

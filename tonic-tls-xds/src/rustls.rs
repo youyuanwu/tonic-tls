@@ -15,7 +15,10 @@ use tokio_rustls::rustls::{
     sign::{CertifiedKey, SingleCertAndKey},
 };
 
-use crate::{CertificateData, CrlSelection};
+use crate::{CertificateData, CrlSelection, Identity};
+
+mod server;
+pub use server::{TlsAcceptor, TlsAcceptorFactory};
 
 /// A rustls handshake connector produced by [`TlsConnectorFactory`].
 #[derive(Clone)]
@@ -115,13 +118,7 @@ pub fn build_client_config(
             .set_certificate_verifier(verifier.build()?);
     }
     if let Some(identity) = data.identity() {
-        let certs =
-            CertificateDer::pem_slice_iter(identity.cert_chain()).collect::<Result<Vec<_>, _>>()?;
-        if certs.is_empty() {
-            return Err(tokio_rustls::rustls::Error::NoCertificatesPresented.into());
-        }
-        let key = PrivateKeyDer::from_pem_slice(identity.key())?;
-        let certified_key = CertifiedKey::from_der(certs, key, config.crypto_provider())?;
+        let certified_key = certified_key(identity, config.crypto_provider())?;
         config.client_auth_cert_resolver = Arc::new(SingleCertAndKey::from(certified_key));
     }
     // Resumed sessions can retain an old authenticated identity or trust
@@ -129,6 +126,19 @@ pub fn build_client_config(
     config.resumption = Resumption::disabled();
 
     Ok(config)
+}
+
+fn certified_key(
+    identity: &Identity,
+    crypto: &tokio_rustls::rustls::crypto::CryptoProvider,
+) -> Result<CertifiedKey, tonic_tls::Error> {
+    let certs =
+        CertificateDer::pem_slice_iter(identity.cert_chain()).collect::<Result<Vec<_>, _>>()?;
+    if certs.is_empty() {
+        return Err(tokio_rustls::rustls::Error::NoCertificatesPresented.into());
+    }
+    let key = PrivateKeyDer::from_pem_slice(identity.key())?;
+    Ok(CertifiedKey::from_der(certs, key, crypto)?)
 }
 
 /// A rustls implementation of [`crate::TlsConnectorFactory`].

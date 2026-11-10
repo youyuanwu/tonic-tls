@@ -57,7 +57,7 @@ impl std::fmt::Debug for Identity {
 /// A backend-neutral snapshot of certificate material.
 ///
 /// Each snapshot supplies roots, an identity, or both. Material not supplied
-/// by the snapshot retains the connector's original configuration; snapshots
+/// by the snapshot retains the connector/acceptor's original configuration; snapshots
 /// are not incremental updates to the previous snapshot.
 /// CRLs are supplied together with the roots used to verify the peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,7 +160,7 @@ impl CertificateData {
 /// material is unchanged and publish a new one when it changes, so adapters can
 /// cache parsed credentials. This interface does not require a TLS feature.
 ///
-/// Snapshot retrieval and validation errors fail connector construction or the
+/// Snapshot retrieval and validation errors fail connector/acceptor construction or the
 /// connection attempt; adapters must not silently fall back to older credentials
 /// or unauthenticated TLS. A provider
 /// may retain its last valid snapshot after a refresh failure, but should
