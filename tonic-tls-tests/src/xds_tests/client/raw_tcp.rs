@@ -1,4 +1,8 @@
-use super::{TestProvider, base_config, identity, roots, wait_for_snapshot};
+use super::super::support::{
+    TestProvider,
+    certs::{base_config, identity, roots},
+    wait_for_snapshot,
+};
 use crate::tests::{create_listener_server, make_test_cert};
 use rustls::{
     ClientConfig, ServerConfig,

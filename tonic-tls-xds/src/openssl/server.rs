@@ -10,8 +10,8 @@ use openssl::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::{configure_identity, configure_roots};
-use crate::{CertificateData, ClientAuth, ServerConfig, server_config::invalid_input};
+use super::common::{configure_identity, configure_roots};
+use crate::{CertificateData, ClientAuth, ServerConfig, invalid_input};
 
 /// An immutable OpenSSL server acceptor built from one certificate snapshot.
 ///

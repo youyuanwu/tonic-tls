@@ -9,6 +9,24 @@ This crate provides xDS-style certificate providers for
 [tonic-tls](../README.md), not the xDS discovery protocol. The built-in TLS
 client and server adapters support **rustls** and **OpenSSL**.
 
+## Source layout
+
+- [provider](src/provider/): snapshots, identities, and file watching, shared by
+  clients and servers.
+- [client](src/client/): backend-neutral reloadable connector and its cache.
+- [server](src/server/): backend-neutral reloadable acceptor and client-auth settings.
+- [rustls](src/rustls/) and [openssl](src/openssl/): matching `client`, `server`,
+  and private `common` modules for backend-specific certificate and CRL handling.
+
+The crate root and backend modules re-export the public APIs; internal file
+organization does not change application imports.
+
+Integration tests live in [xds_tests](../tonic-tls-tests/src/xds_tests/), grouped
+into client scenarios (rotation, CRLs, raw TCP, and backend-specific behavior)
+and server rotation scenarios. Shared providers, certificate fixtures, backend
+adapters, and gRPC helpers live in its `support` directory, not in test suites.
+Run them with `cargo test -p tonic-tls-tests --lib -- xds_tests::`.
+
 ## Installation
 
 No TLS backend is enabled by default. Enable `rustls`:

@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+mod file_watcher;
+pub use file_watcher::{CrlSource, FileWatcherConfig, FileWatcherProvider};
+
 /// Raw, unvalidated bytes intended to contain PEM-encoded TLS material.
 pub(crate) type PemBytes = Vec<u8>;
 

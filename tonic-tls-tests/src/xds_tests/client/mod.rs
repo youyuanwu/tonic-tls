@@ -1,262 +1,27 @@
-use std::sync::Arc;
-
-use crate::{
-    helloworld::{self, HelloReply, HelloRequest},
-    tests::{create_listener_server, make_test_cert},
+use super::support::{
+    TestProvider,
+    backend::{CountingFactory, OpenSsl, Rustls, TestBackend},
+    certs::identity,
+    grpc::{await_peer_identity, connector, peer_identity, start_server},
+    wait_for_snapshot,
 };
-use arc_swap::ArcSwap;
-use backend::{CountingFactory, OpenSsl, Rustls, TestBackend};
-use futures::Stream;
-use rustls::{
-    ClientConfig, RootCertStore, ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-    server::WebPkiClientVerifier,
-};
+use crate::{helloworld, tests::make_test_cert};
 use std::{
-    net::{Shutdown, TcpStream},
-    pin::Pin,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-    task::{Context, Poll},
+    net::Shutdown,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
-use tonic::transport::{Endpoint, server::TcpConnectInfo};
-use tonic::{
-    Request, Response, Status,
-    transport::{Channel, server::TcpIncoming},
-};
-use tonic_tls_xds::{CertificateData, CertificateProvider, Identity};
+use tonic::transport::Endpoint;
+use tonic_tls_xds::{CertificateData, Identity};
 
-mod server_tests;
-
-struct TestProvider {
-    data: ArcSwap<CertificateData>,
-    fail: AtomicBool,
-}
-
-impl TestProvider {
-    fn new(data: CertificateData) -> Arc<Self> {
-        Arc::new(Self {
-            data: ArcSwap::from_pointee(data),
-            fail: AtomicBool::new(false),
-        })
-    }
-}
-
-impl CertificateProvider for TestProvider {
-    fn snapshot(&self) -> Result<Arc<CertificateData>, tonic_tls::Error> {
-        if self.fail.load(Ordering::Relaxed) {
-            return Err(std::io::Error::other("certificate provider unavailable").into());
-        }
-        Ok(self.data.load_full())
-    }
-}
-
-struct TestIncoming {
-    inner: TcpIncoming,
-    first_connection: Option<oneshot::Sender<TcpStream>>,
-}
-
-impl Stream for TestIncoming {
-    type Item = Result<tokio::net::TcpStream, std::io::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let next = std::task::ready!(Pin::new(&mut self.inner).poll_next(cx));
-        Poll::Ready(next.map(|stream| {
-            let stream = stream?;
-            let Some(sender) = self.first_connection.take() else {
-                return Ok(stream);
-            };
-            // Both handles refer to the same socket, allowing a test-triggered shutdown.
-            let stream = stream.into_std()?;
-            sender
-                .send(stream.try_clone()?)
-                .expect("test must receive the first accepted connection");
-            tokio::net::TcpStream::from_std(stream)
-        }))
-    }
-}
-
-impl tonic_tls::Incoming for TestIncoming {
-    type Io = tokio::net::TcpStream;
-    type Error = std::io::Error;
-}
-
-struct PeerGreeter {
-    clients: Vec<CertificateDer<'static>>,
-}
-
-#[tonic::async_trait]
-impl helloworld::greeter_server::Greeter for PeerGreeter {
-    async fn say_hello(
-        &self,
-        request: Request<HelloRequest>,
-    ) -> Result<Response<HelloReply>, Status> {
-        let certs = request
-            .extensions()
-            .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-            .and_then(|info| info.peer_certs())
-            .ok_or_else(|| Status::unauthenticated("missing client certificate"))?;
-        // Report the expected-cert index of the actual TLS peer's leaf certificate.
-        // With [first, second], "0" means original and "1" means rotated.
-        let index = self
-            .clients
-            .iter()
-            .position(|cert| Some(cert) == certs.first())
-            .ok_or_else(|| Status::unauthenticated("unexpected client certificate"))?;
-        Ok(Response::new(HelloReply {
-            message: index.to_string(),
-        }))
-    }
-}
-
-fn identity(cert: &rcgen::Certificate, key: &rcgen::KeyPair) -> Identity {
-    Identity::from_pem(cert.pem(), key.serialize_pem())
-}
-
-async fn wait_for_snapshot(
-    provider: &dyn CertificateProvider,
-    description: &str,
-    predicate: impl Fn(&CertificateData) -> bool,
-) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !predicate(&provider.snapshot().unwrap()) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("file watcher did not publish {description}"));
-}
-
-fn roots(certs: &[&rcgen::Certificate]) -> RootCertStore {
-    let mut roots = RootCertStore::empty();
-    for cert in certs {
-        roots.add(cert.der().clone()).unwrap();
-    }
-    roots
-}
-
-fn base_config(certs: &[&rcgen::Certificate]) -> ClientConfig {
-    let mut config =
-        ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(roots(certs))
-            .with_no_client_auth();
-    config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
-    config
-}
-
-async fn start_server(
-    cert: &rcgen::Certificate,
-    key: &rcgen::KeyPair,
-    clients: &[&rcgen::Certificate],
-    first_connection: Option<oneshot::Sender<TcpStream>>,
-) -> (Endpoint, CancellationToken, tokio::task::JoinHandle<()>) {
-    let crypto = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier =
-        WebPkiClientVerifier::builder_with_provider(Arc::new(roots(clients)), crypto.clone())
-            .build()
-            .unwrap();
-    let mut config = ServerConfig::builder_with_provider(crypto)
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_client_cert_verifier(verifier)
-        .with_single_cert(
-            vec![cert.der().clone()],
-            PrivateKeyDer::from_pem_slice(key.serialize_pem().as_bytes()).unwrap(),
-        )
-        .unwrap();
-    config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
-    let greeter = PeerGreeter {
-        clients: clients.iter().map(|cert| cert.der().clone()).collect(),
-    };
-    let (listener, addr) = create_listener_server().await;
-    let shutdown = CancellationToken::new();
-    let signal = shutdown.clone();
-    let task = tokio::spawn(async move {
-        let incoming = tonic_tls::rustls::TlsIncoming::new(
-            TestIncoming {
-                inner: TcpIncoming::from(listener),
-                first_connection,
-            },
-            Arc::new(config),
-        );
-        tonic::transport::Server::builder()
-            .add_service(helloworld::greeter_server::GreeterServer::new(greeter))
-            .serve_with_incoming_shutdown(incoming, signal.cancelled_owned())
-            .await
-            .unwrap();
-    });
-    let endpoint = Endpoint::from_shared(format!("https://{addr}"))
-        .unwrap()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(5));
-    (endpoint, shutdown, task)
-}
-
-fn connector<B: TestBackend>(
-    endpoint: &Endpoint,
-    factory: B::Factory,
-    provider: Arc<dyn CertificateProvider>,
-) -> tonic_tls_xds::ReloadableTlsConnector<tokio::net::TcpStream, B::Connector> {
-    tonic_tls_xds::ReloadableTlsConnector::new(
-        tonic_tls::TcpTransport::from_endpoint(endpoint),
-        provider,
-        factory,
-    )
-    .unwrap()
-}
-
-async fn peer_identity(
-    client: &mut helloworld::greeter_client::GreeterClient<Channel>,
-) -> Result<String, Status> {
-    Ok(client
-        .say_hello(HelloRequest {
-            name: "rotation".into(),
-        })
-        .await?
-        .into_inner()
-        .message)
-}
-
-async fn await_peer_identity(
-    client: &mut helloworld::greeter_client::GreeterClient<Channel>,
-    expected: &str,
-) {
-    let mut attempts = 0;
-    let mut last_error = None;
-    let result = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            attempts += 1;
-            match peer_identity(client).await {
-                Ok(peer) => {
-                    assert_eq!(peer, expected);
-                    break;
-                }
-                Err(status) => {
-                    // The first RPC can race with tonic noticing the closed connection.
-                    assert!(
-                        status.code() == tonic::Code::Unavailable
-                            || (matches!(
-                                status.code(),
-                                tonic::Code::Unknown | tonic::Code::Cancelled
-                            ) && std::error::Error::source(&status).is_some()),
-                        "unexpected reconnect error: {status:?}",
-                    );
-                    last_error = Some(status);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "same channel did not reconnect with identity {expected} after {attempts} attempts; last error: {last_error:?}",
-    );
-}
+mod crl;
+mod openssl;
+mod raw_tcp;
+mod rustls;
 
 async fn client_identity_rotates_on_channel_reconnect<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
@@ -589,69 +354,6 @@ fn client_connector_rejects_invalid_material_at_construction<B: TestBackend>() {
     }
 }
 
-#[test]
-fn rustls_client_factory_rejects_empty_chain_with_unknown_key_consistency() {
-    #[derive(Debug)]
-    struct SigningKey(Arc<dyn rustls::sign::SigningKey>);
-
-    impl rustls::sign::SigningKey for SigningKey {
-        fn choose_scheme(
-            &self,
-            offered: &[rustls::SignatureScheme],
-        ) -> Option<Box<dyn rustls::sign::Signer>> {
-            self.0.choose_scheme(offered)
-        }
-
-        fn algorithm(&self) -> rustls::SignatureAlgorithm {
-            self.0.algorithm()
-        }
-    }
-
-    #[derive(Debug)]
-    struct KeyProvider;
-
-    impl rustls::crypto::KeyProvider for KeyProvider {
-        fn load_private_key(
-            &self,
-            key: PrivateKeyDer<'static>,
-        ) -> Result<Arc<dyn rustls::sign::SigningKey>, rustls::Error> {
-            let key = rustls::crypto::ring::default_provider()
-                .key_provider
-                .load_private_key(key)?;
-            Ok(Arc::new(SigningKey(key)))
-        }
-    }
-
-    // The wrapper deliberately omits public_key(), making rustls skip key matching.
-    let mut crypto = rustls::crypto::ring::default_provider();
-    crypto.key_provider = &KeyProvider;
-    let base = ClientConfig::builder_with_provider(Arc::new(crypto))
-        .with_safe_default_protocol_versions()
-        .unwrap()
-        .with_root_certificates(RootCertStore::empty())
-        .with_no_client_auth();
-    let factory = tonic_tls_xds::rustls::TlsConnectorFactory::new(
-        Arc::new(base),
-        "localhost".try_into().unwrap(),
-    );
-    let key = rcgen::KeyPair::generate().unwrap();
-    let data = CertificateData::new(
-        None,
-        Some(Identity::from_pem(b"", key.serialize_pem())),
-        None,
-    )
-    .unwrap();
-    let error = tonic_tls_xds::TlsConnectorFactory::<tokio::io::DuplexStream>::build_connector(
-        &factory, &data,
-    )
-    .err()
-    .expect("an empty chain must be rejected even without key matching");
-    assert!(matches!(
-        error.downcast_ref::<rustls::Error>(),
-        Some(rustls::Error::NoCertificatesPresented),
-    ));
-}
-
 macro_rules! rotation_tests {
     ($module:ident, $backend:ty) => {
         mod $module {
@@ -687,8 +389,3 @@ macro_rules! rotation_tests {
 
 rotation_tests!(rustls_rotation, Rustls);
 rotation_tests!(openssl_rotation, OpenSsl);
-
-mod backend;
-mod crl_tests;
-mod openssl_tests;
-mod raw_tcp_tests;

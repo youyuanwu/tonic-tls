@@ -144,6 +144,7 @@ where
             Err(error) => {
                 drop(cached);
                 tracing::debug!(
+                    target: "tonic_tls_xds::reloadable_tls_acceptor",
                     error = %error,
                     stage = "snapshot",
                     "certificate snapshot retrieval failed",
@@ -161,6 +162,7 @@ where
             Err(error) => {
                 drop(cached);
                 tracing::debug!(
+                    target: "tonic_tls_xds::reloadable_tls_acceptor",
                     error = %error,
                     stage = "build_acceptor",
                     "TLS acceptor build failed",
@@ -174,7 +176,11 @@ where
             acceptor: acceptor.clone(),
         });
         drop(cached);
-        tracing::debug!(replaced, "TLS acceptor rebuilt from certificate snapshot");
+        tracing::debug!(
+            target: "tonic_tls_xds::reloadable_tls_acceptor",
+            replaced,
+            "TLS acceptor rebuilt from certificate snapshot",
+        );
         Ok(acceptor)
     }
 }

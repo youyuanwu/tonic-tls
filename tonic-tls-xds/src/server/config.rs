@@ -1,6 +1,6 @@
-#[cfg(any(feature = "rustls", feature = "openssl"))]
-use crate::CertificateData;
 use crate::Identity;
+#[cfg(any(feature = "rustls", feature = "openssl"))]
+use crate::{CertificateData, invalid_input};
 
 /// Whether a server requests and requires a verified client certificate.
 ///
@@ -121,9 +121,4 @@ impl ServerConfig {
         }
         Ok(())
     }
-}
-
-#[cfg(any(feature = "rustls", feature = "openssl"))]
-pub(crate) fn invalid_input(message: &str) -> tonic_tls::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidInput, message).into()
 }

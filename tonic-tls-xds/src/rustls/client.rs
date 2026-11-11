@@ -1,24 +1,15 @@
-//! Rustls adapter for provider-driven TLS connections.
-
-use std::{
-    collections::{BTreeMap, btree_map::Entry},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     client::{Resumption, WebPkiServerVerifier},
-    pki_types::{
-        CertificateDer, CertificateRevocationListDer, PrivateKeyDer, ServerName, pem::PemObject,
-    },
-    sign::{CertifiedKey, SingleCertAndKey},
+    pki_types::{CertificateDer, ServerName, pem::PemObject},
+    sign::SingleCertAndKey,
 };
 
-use crate::{CertificateData, CrlSelection, Identity};
-
-mod server;
-pub use server::{TlsAcceptor, TlsAcceptorFactory};
+use super::common::{certified_key, select_crls};
+use crate::CertificateData;
 
 /// A rustls handshake connector produced by [`TlsConnectorFactory`].
 #[derive(Clone)]
@@ -128,19 +119,6 @@ pub fn build_client_config(
     Ok(config)
 }
 
-fn certified_key(
-    identity: &Identity,
-    crypto: &tokio_rustls::rustls::crypto::CryptoProvider,
-) -> Result<CertifiedKey, tonic_tls::Error> {
-    let certs =
-        CertificateDer::pem_slice_iter(identity.cert_chain()).collect::<Result<Vec<_>, _>>()?;
-    if certs.is_empty() {
-        return Err(tokio_rustls::rustls::Error::NoCertificatesPresented.into());
-    }
-    let key = PrivateKeyDer::from_pem_slice(identity.key())?;
-    Ok(CertifiedKey::from_der(certs, key, crypto)?)
-}
-
 /// A rustls implementation of [`crate::TlsConnectorFactory`].
 ///
 /// Use with [`crate::ReloadableTlsConnector`] to apply snapshots to the original
@@ -179,50 +157,4 @@ where
         let config = build_client_config(&self.config, data)?;
         Ok((TlsConnector::from(Arc::new(config)), self.domain.clone()))
     }
-}
-
-fn select_crls(
-    bundles: &[Vec<u8>],
-    selection: CrlSelection,
-) -> Result<Vec<CertificateRevocationListDer<'static>>, tonic_tls::Error> {
-    if bundles.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "CRL collection must not be empty",
-        )
-        .into());
-    }
-    let mut by_issuer = BTreeMap::new();
-    for (bundle_index, bundle) in bundles.iter().enumerate() {
-        let crls =
-            CertificateRevocationListDer::pem_slice_iter(bundle).collect::<Result<Vec<_>, _>>()?;
-        if crls.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("CRL bundle {bundle_index} must contain at least one PEM CRL"),
-            )
-            .into());
-        }
-        for (crl_index, crl) in crls.into_iter().enumerate() {
-            // Parse entries too, so a malformed duplicate cannot be silently discarded.
-            let parsed =
-                webpki::CertRevocationList::from(webpki::OwnedCertRevocationList::from_der(&crl)?);
-            match by_issuer.entry(parsed.issuer().to_vec()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(crl);
-                }
-                Entry::Occupied(mut entry) => match selection {
-                    CrlSelection::FirstPerIssuer => tracing::error!(
-                        bundle_index,
-                        crl_index,
-                        "multiple CRLs with the same issuer; keeping the first CRL",
-                    ),
-                    CrlSelection::LastPerIssuer => {
-                        entry.insert(crl);
-                    }
-                },
-            }
-        }
-    }
-    Ok(by_issuer.into_values().collect())
 }

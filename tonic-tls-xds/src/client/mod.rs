@@ -200,6 +200,7 @@ where
     fn connector_pair(&self) -> Result<ConnectorPair<IO, F::Connector>, tonic_tls::Error> {
         let data = self.0.provider.snapshot().inspect_err(|error| {
             tracing::debug!(
+                target: "tonic_tls_xds::reloadable_tls_connector",
                 error = %error,
                 stage = "snapshot",
                 "certificate snapshot retrieval failed",
@@ -221,6 +222,7 @@ where
             Err(error) => {
                 drop(cached);
                 tracing::debug!(
+                    target: "tonic_tls_xds::reloadable_tls_connector",
                     error = %error,
                     stage = "build_connector",
                     "TLS connector build failed",
@@ -234,7 +236,11 @@ where
             connector_pair: connector_pair.clone(),
         });
         drop(cached);
-        tracing::debug!(replaced, "TLS connector rebuilt from certificate snapshot",);
+        tracing::debug!(
+            target: "tonic_tls_xds::reloadable_tls_connector",
+            replaced,
+            "TLS connector rebuilt from certificate snapshot",
+        );
         Ok(connector_pair)
     }
 }
