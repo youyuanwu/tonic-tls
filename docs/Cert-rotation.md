@@ -6,11 +6,11 @@ documented in [tonic-tls-xds](../tonic-tls-xds/README.md).
 
 ## Server certificate rotation
 
-The examples below demonstrate manual server identity rotation. For proposed
-OpenSSL server support and the implemented rustls provider-driven rotation of
-server identity, client trust, and CRLs, see the
-[server TLS rotation design](Server-cert-rotation-design.md). For rustls API
-examples and policies, see [server rotation](../tonic-tls-xds/README.md#server-rotation-rustls).
+The examples below demonstrate manual server identity rotation. For
+provider-driven rustls/OpenSSL rotation of server identity, client trust, and
+CRLs, see the [server TLS rotation design](Server-cert-rotation-design.md).
+For API examples and policies, see
+[server rotation](../tonic-tls-xds/README.md#server-rotation).
 
 TLS certificates expire and need to be rotated without restarting the server.
 `TlsIncoming::new()` captures the acceptor once at construction time and

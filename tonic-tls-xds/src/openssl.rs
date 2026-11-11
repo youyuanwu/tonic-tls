@@ -10,8 +10,8 @@ use openssl::{
     error::ErrorStack,
     pkey::PKey,
     ssl::{
-        SslConnector, SslMethod, SslMode, SslOptions, SslSessionCacheMode, SslVerifyMode,
-        SslVersion,
+        SslConnector, SslContextBuilder, SslMethod, SslMode, SslOptions, SslSessionCacheMode,
+        SslVerifyMode, SslVersion,
     },
     x509::{
         X509, X509Crl, X509StoreContextRef, X509VerifyResult, store::X509StoreBuilder,
@@ -22,6 +22,9 @@ use pki_types::{CertificateRevocationListDer, PrivateKeyDer, pem::PemObject};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::{CertificateData, CrlSelection, Identity};
+
+mod server;
+pub use server::{TlsAcceptor, TlsAcceptorFactory};
 
 /// Settings for crate-managed OpenSSL client contexts.
 ///
@@ -153,44 +156,10 @@ impl TlsConnector {
         builder.set_mode(SslMode::NO_AUTO_CHAIN);
 
         if let Some(roots) = data.roots().or(base.roots.as_deref()) {
-            let roots = X509::stack_from_pem(roots)?;
-            if roots.is_empty() {
-                return Err(invalid_input(
-                    "root bundle must contain at least one PEM certificate",
-                ));
-            }
-            let mut store = X509StoreBuilder::new()?;
-            for root in roots {
-                store.add_cert(root)?;
-            }
-            if let Some(bundles) = data.crls() {
-                for crl in select_crls(bundles, data.crl_selection())? {
-                    // The store retains a reference; both arguments are live for the call.
-                    if unsafe { native::X509_STORE_add_crl(store.as_ptr(), crl.as_ptr()) } != 1 {
-                        return Err(ErrorStack::get().into());
-                    }
-                }
-                builder
-                    .verify_param_mut()
-                    .set_flags(X509VerifyFlags::CRL_CHECK | X509VerifyFlags::CRL_CHECK_ALL)?;
-                builder.set_verify_callback(SslVerifyMode::PEER, verify_except_anchor_crl);
-            }
-            builder.set_cert_store(store.build());
+            configure_roots(&mut builder, roots, data, SslVerifyMode::PEER)?;
         }
         if let Some(identity) = data.identity().or(base.identity.as_ref()) {
-            let mut certs = X509::stack_from_pem(identity.cert_chain())?.into_iter();
-            let cert = certs.next().ok_or_else(|| {
-                invalid_input("identity must contain at least one PEM certificate")
-            })?;
-            // Decode only unencrypted PEM formats; OpenSSL's PEM reader can prompt.
-            let key_der = PrivateKeyDer::from_pem_slice(identity.key())?;
-            let key = PKey::private_key_from_der(key_der.secret_der())?;
-            builder.set_certificate(&cert)?;
-            builder.set_private_key(&key)?;
-            builder.check_private_key()?;
-            for cert in certs {
-                builder.add_extra_chain_cert(cert)?;
-            }
+            configure_identity(&mut builder, identity)?;
         }
         let mut alpn = Vec::new();
         for protocol in &base.alpn_protocols {
@@ -301,6 +270,58 @@ where
 
 fn invalid_input(message: &str) -> tonic_tls::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message).into()
+}
+
+fn configure_roots(
+    builder: &mut SslContextBuilder,
+    pem: &[u8],
+    data: &CertificateData,
+    mode: SslVerifyMode,
+) -> Result<Vec<X509>, tonic_tls::Error> {
+    let roots = X509::stack_from_pem(pem)?;
+    if roots.is_empty() {
+        return Err(invalid_input(
+            "root bundle must contain at least one PEM certificate",
+        ));
+    }
+    let mut store = X509StoreBuilder::new()?;
+    for root in &roots {
+        store.add_cert(root.clone())?;
+    }
+    if let Some(bundles) = data.crls() {
+        for crl in select_crls(bundles, data.crl_selection())? {
+            // The store retains a reference; both arguments are live for the call.
+            if unsafe { native::X509_STORE_add_crl(store.as_ptr(), crl.as_ptr()) } != 1 {
+                return Err(ErrorStack::get().into());
+            }
+        }
+        builder
+            .verify_param_mut()
+            .set_flags(X509VerifyFlags::CRL_CHECK | X509VerifyFlags::CRL_CHECK_ALL)?;
+        builder.set_verify_callback(mode, verify_except_anchor_crl);
+    }
+    builder.set_cert_store(store.build());
+    Ok(roots)
+}
+
+fn configure_identity(
+    builder: &mut SslContextBuilder,
+    identity: &Identity,
+) -> Result<(), tonic_tls::Error> {
+    let mut certs = X509::stack_from_pem(identity.cert_chain())?.into_iter();
+    let cert = certs
+        .next()
+        .ok_or_else(|| invalid_input("identity must contain at least one PEM certificate"))?;
+    // Decode only unencrypted PEM formats; OpenSSL's PEM reader can prompt.
+    let key_der = PrivateKeyDer::from_pem_slice(identity.key())?;
+    let key = PKey::private_key_from_der(key_der.secret_der())?;
+    builder.set_certificate(&cert)?;
+    builder.set_private_key(&key)?;
+    builder.check_private_key()?;
+    for cert in certs {
+        builder.add_extra_chain_cert(cert)?;
+    }
+    Ok(())
 }
 
 fn select_crls(

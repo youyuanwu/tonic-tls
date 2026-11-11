@@ -1,4 +1,4 @@
-#[cfg(feature = "rustls")]
+#[cfg(any(feature = "rustls", feature = "openssl"))]
 use crate::CertificateData;
 use crate::Identity;
 
@@ -88,7 +88,7 @@ impl ServerConfig {
         self
     }
 
-    #[cfg(feature = "rustls")]
+    #[cfg(any(feature = "rustls", feature = "openssl"))]
     pub(crate) fn validate(&self, data: &CertificateData) -> Result<(), tonic_tls::Error> {
         let roots = data.roots().or(self.roots.as_deref());
         match self.client_auth {
@@ -123,7 +123,7 @@ impl ServerConfig {
     }
 }
 
-#[cfg(feature = "rustls")]
+#[cfg(any(feature = "rustls", feature = "openssl"))]
 pub(crate) fn invalid_input(message: &str) -> tonic_tls::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message).into()
 }

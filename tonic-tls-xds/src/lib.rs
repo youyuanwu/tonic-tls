@@ -10,8 +10,9 @@
 //! Enable the `rustls` feature for the built-in `rustls::TlsConnectorFactory`.
 //! It also provides `rustls::TlsAcceptorFactory` for server identity, client CA,
 //! and client-certificate CRL rotation with [`ServerConfig`].
-//! Enable `openssl` for `openssl::TlsConnectorFactory` (OpenSSL 1.1.1 or newer).
-//! OpenSSL server rotation is not implemented.
+//! Enable `openssl` for `openssl::TlsConnectorFactory` and
+//! `openssl::TlsAcceptorFactory` (OpenSSL 1.1.1 or newer). Both server backends
+//! use the same [`ServerConfig`] and provider snapshots.
 //! Providers and generic connector/acceptor APIs require no TLS backend feature.
 //! This crate does not implement the xDS discovery protocol.
 

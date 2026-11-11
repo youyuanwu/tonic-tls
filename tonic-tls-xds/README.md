@@ -2,13 +2,12 @@
 
 Reload client certificates, trusted CAs, and certificate revocation lists (CRLs)
 without restarting your application or rebuilding a tonic channel.
-With rustls, also rotate server identities, trusted client CAs, and client CRLs
+Also rotate server identities, trusted client CAs, and client CRLs
 without restarting the listener.
 
 This crate provides xDS-style certificate providers for
 [tonic-tls](../README.md), not the xDS discovery protocol. The built-in TLS
-client adapters support **rustls** and **OpenSSL**. The built-in server adapter
-supports **rustls only**.
+client and server adapters support **rustls** and **OpenSSL**.
 
 ## Installation
 
@@ -127,7 +126,7 @@ Reads across multiple files are not atomic. Publish related files atomically
 where possible, or use a custom provider that validates a complete update before
 publishing it.
 
-## Server rotation (rustls)
+## Server rotation
 
 Reuse `FileWatcherProvider`, `CertificateProvider`, and `CertificateData` with
 `ReloadableTlsAcceptor`. One snapshot supplies the server's identity and the
@@ -162,9 +161,22 @@ tonic::transport::Server::builder()
 
 The `rustls` feature enables TLS 1.2 and TLS 1.3, but does not choose a crypto
 provider or install a process-wide default for you. The factory uses the explicit
-provider to build fresh native server configurations. Arbitrary native server
-configs, authentication callbacks, and protocol/cipher overrides are not accepted
-by the built-in factory.
+provider to build fresh native server configurations.
+
+For OpenSSL, keep the same provider and `ServerConfig`, replacing factory
+construction with:
+
+```rust
+let factory = tonic_tls_xds::openssl::TlsAcceptorFactory::new(config);
+let acceptor = ReloadableTlsAcceptor::new(provider, factory)?;
+let incoming = acceptor.incoming(tcp_incoming);
+```
+
+OpenSSL requires no rustls crypto provider. The crate builds a fresh context
+using OpenSSL's Mozilla intermediate v5 profile, requires TLS 1.2 or newer,
+and disables session caching, TLS 1.2/TLS 1.3 tickets, and early data.
+Arbitrary native server configs/contexts, authentication callbacks, PSK hooks,
+and protocol/cipher overrides are not accepted by either built-in factory.
 
 ### Server settings and client authentication
 
@@ -191,9 +203,11 @@ Explicitly trusted intermediate CAs may terminate a chain. CA-name hints come
 from the selected client trust bundle.
 
 Validation authenticates the peer; it does not authorize RPCs. Read certificates
-from `tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>` in request extensions
-and apply application identity/permission checks. Certificate SAN extraction
-requires parsing the exposed DER; no normalized principal API is provided.
+from `tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>` or
+`tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>` in request extensions and
+apply application identity/permission checks. Rustls exposes certificate DER,
+which requires parsing to extract SANs; OpenSSL exposes native `X509` objects.
+No normalized principal API is provided.
 Tonic obtains connection info per connection and clones it into requests.
 Applications should evaluate current permissions per RPC.
 
@@ -248,9 +262,11 @@ let tls_stream = acceptor.accept(tcp_stream).await?;
 ```
 
 For a single manually selected snapshot, use
-`tonic_tls_xds::rustls::TlsAcceptor::new(&config, &snapshot, crypto)`.
-The resulting streams use the existing core rustls wrapper and its `Connected`
-implementation. Custom transports can use `incoming` by implementing
+`tonic_tls_xds::rustls::TlsAcceptor::new(&config, &snapshot, crypto)` or
+`tonic_tls_xds::openssl::TlsAcceptor::new(&config, &snapshot)`.
+For cached OpenSSL raw streams, use `openssl::TlsAcceptorFactory::new(config)`
+in the same example. The resulting streams use the existing backend's core
+wrapper and its `Connected` implementation. Custom transports can use `incoming` by implementing
 `tonic_tls::Incoming`. A custom `TlsAcceptorFactory` is responsible for preserving
 the identity, verification, CRL, and full-handshake guarantees.
 
@@ -285,7 +301,7 @@ When enabled, CRL checking:
 - Applies additions, changes, and removals on subsequent connections. Expiry is
   checked at handshake time even if the CRL files have not changed.
 
-Both client backends and the rustls server backend implement these rules.
+Both backends implement these rules for clients and servers.
 OpenSSL also rejects CRLs whose `thisUpdate`
 is in the future and requires `nextUpdate`. It uses the current verification time
 and does not enable delta/indirect CRLs or flags that bypass time or

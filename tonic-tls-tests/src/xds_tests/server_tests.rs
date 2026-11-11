@@ -1,3 +1,4 @@
+use super::backend::{TestServerBackend, VerificationFailure};
 use super::crl_tests::{ca, ca_params, crl, server_cert};
 use super::*;
 use rcgen::{CertifiedIssuer, KeyPair};
@@ -9,23 +10,21 @@ use tonic_tls_xds::{
 };
 
 #[derive(Clone)]
-struct CountingServerFactory {
-    inner: tonic_tls_xds::rustls::TlsAcceptorFactory,
+struct CountingServerFactory<F> {
+    inner: F,
     builds: Arc<AtomicUsize>,
 }
 
-impl<IO> TlsAcceptorFactory<IO> for CountingServerFactory
+impl<IO, F> TlsAcceptorFactory<IO> for CountingServerFactory<F>
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    F: TlsAcceptorFactory<IO>,
 {
-    type Acceptor = tonic_tls_xds::rustls::TlsAcceptor;
+    type Acceptor = F::Acceptor;
 
     fn build_acceptor(&self, data: &CertificateData) -> Result<Self::Acceptor, tonic_tls::Error> {
         self.builds.fetch_add(1, Ordering::Relaxed);
-        <tonic_tls_xds::rustls::TlsAcceptorFactory as TlsAcceptorFactory<IO>>::build_acceptor(
-            &self.inner,
-            data,
-        )
+        self.inner.build_acceptor(data)
     }
 }
 
@@ -33,19 +32,21 @@ fn crypto() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-fn acceptor<IO>(
+fn acceptor<B, IO>(
     provider: Arc<dyn CertificateProvider>,
     base: ManagedConfig,
 ) -> (
-    ReloadableTlsAcceptor<IO, CountingServerFactory>,
+    ReloadableTlsAcceptor<IO, CountingServerFactory<B::ServerFactory>>,
     Arc<AtomicUsize>,
 )
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    B: TestServerBackend,
+    B::ServerFactory: TlsAcceptorFactory<IO, Acceptor = B::Acceptor>,
 {
     let builds = Arc::new(AtomicUsize::new(0));
     let factory = CountingServerFactory {
-        inner: tonic_tls_xds::rustls::TlsAcceptorFactory::new(base, crypto()),
+        inner: B::server_factory(base),
         builds: builds.clone(),
     };
     (
@@ -114,18 +115,9 @@ where
     .expect("TLS exchange stalled");
 }
 
-fn tls_error(error: &tonic_tls::Error) -> &rustls::Error {
-    error
-        .downcast_ref::<std::io::Error>()
-        .unwrap()
-        .get_ref()
-        .unwrap()
-        .downcast_ref::<rustls::Error>()
-        .unwrap()
-}
-
-#[tokio::test]
-async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
+async fn identities_and_client_roots_are_complete_overlays_on_original_base<
+    B: TestServerBackend,
+>() {
     let root = ca("server root");
     let intermediate = CertifiedIssuer::signed_by(
         ca_params("server intermediate", 2),
@@ -146,7 +138,7 @@ async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
     let provider = TestProvider::new(
         CertificateData::new(Some(client_ca2.pem().into_bytes()), None, None).unwrap(),
     );
-    let (acceptor, builds) = acceptor(provider.clone(), base);
+    let (acceptor, builds) = acceptor::<B, _>(provider.clone(), base);
     let first_config = client_config(&[root.as_ref()], &[&client2], &key2);
     let (client_result, server_result) = handshake(&acceptor, first_config.clone()).await;
     let mut old_client = client_result.unwrap();
@@ -160,12 +152,14 @@ async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
         client_config(&[root.as_ref()], &[&client1], &key1),
     )
     .await;
-    assert!(matches!(
-        tls_error(&rejected.err().unwrap()),
-        rustls::Error::InvalidCertificate(_)
-    ));
+    B::assert_invalid_certificate(&rejected.err().unwrap());
 
-    let new_key = KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+    // OpenSSL 3.0 cannot decode ring's PKCS#8 v2 Ed25519 encoding.
+    let new_key = openssl::pkey::PKey::generate_ed25519()
+        .unwrap()
+        .private_key_to_pem_pkcs8()
+        .unwrap();
+    let new_key = KeyPair::from_pem(std::str::from_utf8(&new_key).unwrap()).unwrap();
     let new_server = rcgen::CertificateParams::new(vec!["localhost".into()])
         .unwrap()
         .self_signed(&new_key)
@@ -175,8 +169,8 @@ async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
     ));
     let (client_result, server_result) =
         handshake(&acceptor, client_config(&[&new_server], &[&client1], &key1)).await;
-    let mut new_client = client_result.unwrap();
     let mut new_stream = server_result.unwrap();
+    let mut new_client = client_result.unwrap();
     assert_eq!(
         new_client.get_ref().1.peer_certificates().unwrap(),
         &[new_server.der().clone()]
@@ -184,10 +178,7 @@ async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
     exchange(&mut new_client, &mut new_stream).await;
     let (_, rejected) =
         handshake(&acceptor, client_config(&[&new_server], &[&client2], &key2)).await;
-    assert!(matches!(
-        tls_error(&rejected.err().unwrap()),
-        rustls::Error::InvalidCertificate(_)
-    ));
+    B::assert_invalid_certificate(&rejected.err().unwrap());
     let (rejected, _) = handshake(
         &acceptor,
         client_config(&[root.as_ref()], &[&client1], &key1),
@@ -204,8 +195,7 @@ async fn identities_and_client_roots_are_complete_overlays_on_original_base() {
     exchange(&mut old_client, &mut old_server).await;
 }
 
-#[tokio::test]
-async fn client_crl_rotation_rejects_revocation_and_recovers() {
+async fn client_crl_rotation_rejects_revocation_and_recovers<B: TestServerBackend>() {
     let root = ca("client root");
     let intermediate = CertifiedIssuer::signed_by(
         ca_params("client intermediate", 2),
@@ -222,29 +212,26 @@ async fn client_crl_rotation_rejects_revocation_and_recovers() {
     let data =
         |crls| CertificateData::new(Some(root.pem().into_bytes()), None, Some(crls)).unwrap();
     let provider = TestProvider::new(data(vec![crl(&root, &[]), crl(&intermediate, &[])]));
-    let (acceptor, builds) = acceptor(provider.clone(), base);
+    let (acceptor, builds) = acceptor::<B, _>(provider.clone(), base);
     let (client, server) = handshake(&acceptor, client_config.clone()).await;
     exchange(&mut client.unwrap(), &mut server.unwrap()).await;
     for (crls, expected) in [
         (
             vec![crl(&root, &[]), crl(&intermediate, &[3])],
-            rustls::CertificateError::Revoked,
+            VerificationFailure::Revoked,
         ),
         (
             vec![crl(&root, &[2]), crl(&intermediate, &[])],
-            rustls::CertificateError::Revoked,
+            VerificationFailure::Revoked,
         ),
         (
             vec![crl(&root, &[])],
-            rustls::CertificateError::UnknownRevocationStatus,
+            VerificationFailure::UnknownRevocationStatus,
         ),
     ] {
         provider.data.store(Arc::new(data(crls)));
         let (_, rejected) = handshake(&acceptor, client_config.clone()).await;
-        assert_eq!(
-            tls_error(&rejected.err().unwrap()),
-            &rustls::Error::InvalidCertificate(expected)
-        );
+        B::assert_verification_error(&rejected.err().unwrap(), expected);
     }
 
     provider.data.store(Arc::new(
@@ -255,7 +242,30 @@ async fn client_crl_rotation_rejects_revocation_and_recovers() {
     assert_eq!(builds.load(Ordering::Relaxed), 5);
 }
 
-async fn start_reloadable_server(
+struct ServerPeerGreeter<B> {
+    clients: Vec<CertificateDer<'static>>,
+    backend: std::marker::PhantomData<B>,
+}
+
+#[tonic::async_trait]
+impl<B: TestServerBackend> helloworld::greeter_server::Greeter for ServerPeerGreeter<B> {
+    async fn say_hello(
+        &self,
+        request: Request<HelloRequest>,
+    ) -> Result<Response<HelloReply>, Status> {
+        let leaf = B::peer_leaf(&request)?;
+        let index = self
+            .clients
+            .iter()
+            .position(|cert| cert == &leaf)
+            .ok_or_else(|| Status::unauthenticated("unexpected client certificate"))?;
+        Ok(Response::new(HelloReply {
+            message: index.to_string(),
+        }))
+    }
+}
+
+async fn start_reloadable_server<B: TestServerBackend>(
     provider: Arc<dyn CertificateProvider>,
     base: ManagedConfig,
     clients: &[&rcgen::Certificate],
@@ -267,15 +277,16 @@ async fn start_reloadable_server(
     Arc<AtomicUsize>,
 ) {
     let (listener, addr) = create_listener_server().await;
-    let (acceptor, builds) = acceptor(provider, base);
+    let (acceptor, builds) = acceptor::<B, _>(provider, base);
     let incoming = acceptor.incoming(TestIncoming {
         inner: TcpIncoming::from(listener),
         first_connection,
     });
     let shutdown = CancellationToken::new();
     let signal = shutdown.clone();
-    let greeter = PeerGreeter {
+    let greeter = ServerPeerGreeter::<B> {
         clients: clients.iter().map(|cert| cert.der().clone()).collect(),
+        backend: std::marker::PhantomData,
     };
     let task = tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -310,8 +321,9 @@ async fn stop_server(shutdown: CancellationToken, task: tokio::task::JoinHandle<
         .unwrap();
 }
 
-#[tokio::test]
-async fn tonic_incoming_rotates_recovers_and_preserves_peer_info_on_reconnect() {
+async fn tonic_incoming_rotates_recovers_and_preserves_peer_info_on_reconnect<
+    B: TestServerBackend,
+>() {
     let (first, key1) = make_test_cert(vec!["localhost".into()]);
     let (second, key2) = make_test_cert(vec!["localhost".into()]);
     let (client, client_key) = make_test_cert(vec!["client".into()]);
@@ -326,7 +338,7 @@ async fn tonic_incoming_rotates_recovers_and_preserves_peer_info_on_reconnect() 
     let base = ManagedConfig::default().with_client_auth(ClientAuth::Required);
     let (first_tx, first_rx) = oneshot::channel();
     let (endpoint, shutdown, task, builds) =
-        start_reloadable_server(provider.clone(), base, &[&client], Some(first_tx)).await;
+        start_reloadable_server::<B>(provider.clone(), base, &[&client], Some(first_tx)).await;
     let config = client_config(&[&first, &second], &[&client], &client_key);
     let mut existing = connect(&endpoint, config.clone()).await.unwrap();
     assert_eq!(peer_identity(&mut existing).await.unwrap(), "0");
@@ -396,8 +408,7 @@ async fn tonic_incoming_rotates_recovers_and_preserves_peer_info_on_reconnect() 
     stop_server(shutdown, task).await;
 }
 
-#[tokio::test]
-async fn file_watcher_rotates_server_identity_without_restarting_listener() {
+async fn file_watcher_rotates_server_identity_without_restarting_listener<B: TestServerBackend>() {
     let (first, key1) = make_test_cert(vec!["localhost".into()]);
     let (second, key2) = make_test_cert(vec!["localhost".into()]);
     let (client, client_key) = make_test_cert(vec!["client".into()]);
@@ -421,7 +432,7 @@ async fn file_watcher_rotates_server_identity_without_restarting_listener() {
         .with_ca_certificates(client.pem())
         .with_client_auth(ClientAuth::Required);
     let (endpoint, shutdown, task, builds) =
-        start_reloadable_server(provider.clone(), base, &[&client], None).await;
+        start_reloadable_server::<B>(provider.clone(), base, &[&client], None).await;
     let mut existing = connect(&endpoint, client_config(&[&first], &[&client], &client_key))
         .await
         .unwrap();
@@ -461,8 +472,9 @@ impl TlsAcceptor<DuplexStream> for NativeAcceptor {
     }
 }
 
-#[tokio::test]
-async fn tls12_and_tls13_full_handshakes_are_enforced_before_and_after_rotation() {
+async fn tls12_and_tls13_full_handshakes_are_enforced_before_and_after_rotation<
+    B: TestServerBackend,
+>() {
     let (server, key) = make_test_cert(vec!["localhost".into()]);
     let (rotated_server, rotated_key) = make_test_cert(vec!["localhost".into()]);
     let client_ca = ca("client CA");
@@ -513,7 +525,7 @@ async fn tls12_and_tls13_full_handshakes_are_enforced_before_and_after_rotation(
         };
         let good = data(identity(&server, &key), &[]);
         let provider = TestProvider::new(good.clone());
-        let (acceptor, builds) = acceptor(
+        let (acceptor, builds) = acceptor::<B, _>(
             provider.clone(),
             ManagedConfig::default().with_client_auth(ClientAuth::Required),
         );
@@ -547,16 +559,12 @@ async fn tls12_and_tls13_full_handshakes_are_enforced_before_and_after_rotation(
             &[3],
         )));
         let (_, rejected) = handshake(&acceptor, config.clone()).await;
-        assert_eq!(
-            tls_error(&rejected.err().unwrap()),
-            &rustls::Error::InvalidCertificate(rustls::CertificateError::Revoked)
-        );
+        B::assert_verification_error(&rejected.err().unwrap(), VerificationFailure::Revoked);
         assert_eq!(builds.load(Ordering::Relaxed), 3);
     }
 }
 
-#[tokio::test]
-async fn client_ca_hints_follow_selected_snapshot_and_original_base() {
+async fn client_ca_hints_follow_selected_snapshot_and_original_base<B: TestServerBackend>() {
     #[derive(Debug)]
     struct RecordingResolver {
         key: Arc<rustls::sign::CertifiedKey>,
@@ -603,7 +611,7 @@ async fn client_ca_hints_follow_selected_snapshot_and_original_base() {
         .with_identity(identity(&server, &key))
         .with_client_auth(ClientAuth::Required)
         .with_ca_certificates(first.pem());
-    let (acceptor, _) = acceptor(provider.clone(), base);
+    let (acceptor, _) = acceptor::<B, _>(provider.clone(), base);
     for (pem, expected) in [
         (Some(first.pem()), roots(&[first.as_ref()]).subjects()),
         (
@@ -631,3 +639,49 @@ async fn client_ca_hints_follow_selected_snapshot_and_original_base() {
         );
     }
 }
+
+macro_rules! server_rotation_tests {
+    ($module:ident, $backend:ty) => {
+        mod $module {
+            use super::*;
+
+            #[tokio::test]
+            async fn identity_and_client_roots_rotate() {
+                identities_and_client_roots_are_complete_overlays_on_original_base::<$backend>()
+                    .await;
+            }
+
+            #[tokio::test]
+            async fn client_crls_rotate_and_recover() {
+                client_crl_rotation_rejects_revocation_and_recovers::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn tonic_reconnect_and_failure_recovery() {
+                tonic_incoming_rotates_recovers_and_preserves_peer_info_on_reconnect::<$backend>()
+                    .await;
+            }
+
+            #[tokio::test]
+            async fn file_watcher_rotates_identity() {
+                file_watcher_rotates_server_identity_without_restarting_listener::<$backend>()
+                    .await;
+            }
+
+            #[tokio::test]
+            async fn full_handshakes_before_and_after_rotation() {
+                tls12_and_tls13_full_handshakes_are_enforced_before_and_after_rotation::<$backend>(
+                )
+                .await;
+            }
+
+            #[tokio::test]
+            async fn client_ca_hints_rotate() {
+                client_ca_hints_follow_selected_snapshot_and_original_base::<$backend>().await;
+            }
+        }
+    };
+}
+
+server_rotation_tests!(rustls_servers, Rustls);
+server_rotation_tests!(openssl_servers, OpenSsl);
