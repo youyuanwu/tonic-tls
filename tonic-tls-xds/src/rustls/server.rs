@@ -8,8 +8,8 @@ use tokio_rustls::rustls::{
     server::{NoServerSessionStorage, WebPkiClientVerifier},
 };
 
-use super::{certified_key, select_crls};
-use crate::{CertificateData, ClientAuth, ServerConfig, server_config::invalid_input};
+use super::common::{certified_key, select_crls};
+use crate::{CertificateData, ClientAuth, ServerConfig, invalid_input};
 
 /// An immutable rustls server acceptor built from one certificate snapshot.
 ///

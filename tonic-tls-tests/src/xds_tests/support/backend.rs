@@ -1,4 +1,5 @@
-use super::{CertificateData, Identity, base_config};
+use super::certs::base_config;
+use crate::helloworld::HelloRequest;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -7,15 +8,16 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, DuplexStream},
     net::TcpStream,
 };
-use tonic_tls_xds::{ConnectorPair, TlsConnectorFactory};
+use tonic::transport::server::TcpConnectInfo;
+use tonic_tls_xds::{CertificateData, ConnectorPair, Identity, TlsConnectorFactory};
 
-pub(super) enum VerificationFailure {
+pub(in crate::xds_tests) enum VerificationFailure {
     Revoked,
     UnknownRevocationStatus,
     CrlSignature,
 }
 
-pub(super) trait TestBackend {
+pub(in crate::xds_tests) trait TestBackend {
     type TcpStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     type DuplexStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     type Connector: tonic_tls::TlsConnector<TcpStream, TlsStream = Self::TcpStream>
@@ -31,7 +33,7 @@ pub(super) trait TestBackend {
     fn assert_verification_error(error: &tonic_tls::Error, expected: VerificationFailure);
 }
 
-pub(super) struct Rustls;
+pub(in crate::xds_tests) struct Rustls;
 
 impl TestBackend for Rustls {
     type TcpStream = tokio_rustls::client::TlsStream<TcpStream>;
@@ -82,7 +84,7 @@ impl TestBackend for Rustls {
     }
 }
 
-pub(super) struct OpenSsl;
+pub(in crate::xds_tests) struct OpenSsl;
 
 impl TestBackend for OpenSsl {
     type TcpStream = tokio_openssl::SslStream<TcpStream>;
@@ -113,11 +115,13 @@ impl TestBackend for OpenSsl {
 
     fn assert_verification_error(error: &tonic_tls::Error, _: VerificationFailure) {
         // The adapter returns OpenSSL's SSL error stack, not its X509 verify result.
-        super::openssl_tests::assert_verification_error(error);
+        assert_openssl_verification_error(error);
     }
 }
 
-pub(super) trait TestServerBackend: TestBackend + Send + Sync + 'static {
+pub(in crate::xds_tests) trait TestServerBackend:
+    TestBackend + Send + Sync + 'static
+{
     type ServerTcpStream: AsyncRead
         + AsyncWrite
         + tonic::transport::server::Connected
@@ -132,7 +136,7 @@ pub(super) trait TestServerBackend: TestBackend + Send + Sync + 'static {
 
     fn server_factory(config: tonic_tls_xds::ServerConfig) -> Self::ServerFactory;
     fn peer_leaf(
-        request: &tonic::Request<super::HelloRequest>,
+        request: &tonic::Request<HelloRequest>,
     ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status>;
     fn assert_invalid_certificate(error: &tonic_tls::Error);
 }
@@ -148,11 +152,11 @@ impl TestServerBackend for Rustls {
     }
 
     fn peer_leaf(
-        request: &tonic::Request<super::HelloRequest>,
+        request: &tonic::Request<HelloRequest>,
     ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
         request
             .extensions()
-            .get::<tonic_tls::rustls::SslConnectInfo<super::TcpConnectInfo>>()
+            .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
             .and_then(|info| info.peer_certs())
             .and_then(|certs| certs.first().cloned())
             .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))
@@ -181,11 +185,11 @@ impl TestServerBackend for OpenSsl {
     }
 
     fn peer_leaf(
-        request: &tonic::Request<super::HelloRequest>,
+        request: &tonic::Request<HelloRequest>,
     ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
         let certs = request
             .extensions()
-            .get::<tonic_tls::openssl::SslConnectInfo<super::TcpConnectInfo>>()
+            .get::<tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>>()
             .and_then(|info| info.peer_certs())
             .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))?;
         let leaf = certs
@@ -199,14 +203,28 @@ impl TestServerBackend for OpenSsl {
     }
 
     fn assert_invalid_certificate(error: &tonic_tls::Error) {
-        super::openssl_tests::assert_verification_error(error);
+        assert_openssl_verification_error(error);
     }
 }
 
 #[derive(Clone)]
-pub(super) struct CountingFactory<F> {
+pub(in crate::xds_tests) struct CountingFactory<F> {
     pub inner: F,
     pub builds: Arc<AtomicUsize>,
+}
+
+pub(in crate::xds_tests) fn assert_openssl_verification_error(error: &tonic_tls::Error) {
+    let ssl_error = error.downcast_ref::<openssl::ssl::Error>().unwrap();
+    assert_eq!(ssl_error.code(), openssl::ssl::ErrorCode::SSL);
+    assert!(
+        ssl_error
+            .ssl_error()
+            .unwrap()
+            .errors()
+            .iter()
+            .any(|error| error.reason() == Some("certificate verify failed")),
+        "expected certificate verification failure: {error}",
+    );
 }
 
 impl<IO, F> TlsConnectorFactory<IO> for CountingFactory<F>

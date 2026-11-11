@@ -16,19 +16,24 @@
 //! Providers and generic connector/acceptor APIs require no TLS backend feature.
 //! This crate does not implement the xDS discovery protocol.
 
-mod cert_provider;
-pub use cert_provider::{CertificateData, CertificateProvider, CrlSelection, Identity};
-mod file_watcher;
-pub use file_watcher::{CrlSource, FileWatcherConfig, FileWatcherProvider};
-mod reloadable_tls_connector;
-pub use reloadable_tls_connector::{ConnectorPair, ReloadableTlsConnector, TlsConnectorFactory};
-mod server_config;
-pub use server_config::{ClientAuth, ServerConfig};
-mod reloadable_tls_acceptor;
-pub use reloadable_tls_acceptor::{ReloadableTlsAcceptor, TlsAcceptorFactory};
+mod client;
+mod provider;
+mod server;
+
+pub use client::{ConnectorPair, ReloadableTlsConnector, TlsConnectorFactory};
+pub use provider::{
+    CertificateData, CertificateProvider, CrlSelection, CrlSource, FileWatcherConfig,
+    FileWatcherProvider, Identity,
+};
+pub use server::{ClientAuth, ReloadableTlsAcceptor, ServerConfig, TlsAcceptorFactory};
 
 #[cfg(feature = "rustls")]
 pub mod rustls;
 
 #[cfg(feature = "openssl")]
 pub mod openssl;
+
+#[cfg(any(feature = "rustls", feature = "openssl"))]
+pub(crate) fn invalid_input(message: &str) -> tonic_tls::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message).into()
+}

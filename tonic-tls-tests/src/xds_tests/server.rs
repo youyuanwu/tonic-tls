@@ -1,12 +1,39 @@
-use super::backend::{TestServerBackend, VerificationFailure};
-use super::crl_tests::{ca, ca_params, crl, server_cert};
-use super::*;
+use super::support::{
+    TestProvider,
+    backend::{OpenSsl, Rustls, TestServerBackend, VerificationFailure},
+    certs::{base_config, ca, ca_params, crl, identity, roots, server_cert},
+    grpc::{TestIncoming, await_peer_identity, peer_identity},
+    wait_for_snapshot,
+};
+use crate::{
+    helloworld::{self, HelloReply, HelloRequest},
+    tests::{create_listener_server, make_test_cert},
+};
 use rcgen::{CertifiedIssuer, KeyPair};
+use rustls::{
+    ClientConfig, ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    server::WebPkiClientVerifier,
+};
+use std::{
+    net::{Shutdown, TcpStream},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+use tonic::{
+    Request, Response, Status,
+    transport::{Channel, Endpoint, server::TcpIncoming},
+};
 use tonic_tls::TlsAcceptor;
 use tonic_tls_xds::{
-    ClientAuth, FileWatcherConfig, FileWatcherProvider, ReloadableTlsAcceptor,
-    ServerConfig as ManagedConfig, TlsAcceptorFactory,
+    CertificateData, CertificateProvider, ClientAuth, FileWatcherConfig, FileWatcherProvider,
+    Identity, ReloadableTlsAcceptor, ServerConfig as ManagedConfig, TlsAcceptorFactory,
 };
 
 #[derive(Clone)]

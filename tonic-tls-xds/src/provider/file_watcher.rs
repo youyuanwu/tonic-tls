@@ -4,9 +4,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    CertificateData, CertificateProvider, CrlSelection, Identity, cert_provider::PemBytes,
-};
+use super::{CertificateData, CertificateProvider, CrlSelection, Identity, PemBytes};
 
 /// A source of raw PEM CRL bundles for [`FileWatcherProvider`].
 #[derive(Clone, Debug)]
@@ -333,9 +331,13 @@ async fn refresh_loop(state: Arc<WatcherState>, mut interval: tokio::time::Inter
     loop {
         interval.tick().await;
         match state.refresh().await {
-            Ok(true) => tracing::debug!("certificate files refreshed"),
+            Ok(true) => tracing::debug!(
+                target: "tonic_tls_xds::file_watcher",
+                "certificate files refreshed",
+            ),
             Ok(false) => {}
             Err(error) => tracing::warn!(
+                target: "tonic_tls_xds::file_watcher",
                 error = %error,
                 "certificate file refresh failed; keeping last successfully read snapshot",
             ),

@@ -1,58 +1,27 @@
-use super::backend::VerificationFailure;
-use super::*;
-use rcgen::{CertificateParams, CertifiedIssuer, Issuer, KeyPair};
-use rustls::{CertificateError, pki_types::UnixTime};
-use std::sync::atomic::{AtomicU64, AtomicUsize};
-use tonic_tls_xds::{CrlSelection, CrlSource, FileWatcherConfig, FileWatcherProvider};
-
-pub(super) fn ca_params(name: &str, serial: u64) -> CertificateParams {
-    let mut params = CertificateParams::new(Vec::new()).unwrap();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, name);
-    params.serial_number = Some(serial.into());
-    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    params.key_usages = vec![
-        rcgen::KeyUsagePurpose::KeyCertSign,
-        rcgen::KeyUsagePurpose::CrlSign,
-    ];
-    params
-}
-
-pub(super) fn ca(name: &str) -> CertifiedIssuer<'static, KeyPair> {
-    CertifiedIssuer::self_signed(ca_params(name, 1), KeyPair::generate().unwrap()).unwrap()
-}
-
-pub(super) fn server_cert(issuer: &Issuer<'_, KeyPair>) -> (rcgen::Certificate, KeyPair) {
-    let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
-    params.serial_number = Some(3.into());
-    let key = KeyPair::generate().unwrap();
-    (params.signed_by(&key, issuer).unwrap(), key)
-}
-
-pub(super) fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -> Vec<u8> {
-    rcgen::CertificateRevocationListParams {
-        this_update: rcgen::date_time_ymd(2025, 1, 1),
-        next_update: rcgen::date_time_ymd(2030, 1, 1),
-        crl_number: (revoked.len() as u64 + 1).into(),
-        issuing_distribution_point: None,
-        revoked_certs: revoked
-            .iter()
-            .map(|serial| rcgen::RevokedCertParams {
-                serial_number: (*serial).into(),
-                revocation_time: rcgen::date_time_ymd(2025, 1, 1),
-                reason_code: None,
-                invalidity_date: None,
-            })
-            .collect(),
-        key_identifier_method: rcgen::KeyIdMethod::Sha256,
-    }
-    .signed_by(issuer)
-    .unwrap()
-    .pem()
-    .unwrap()
-    .into_bytes()
-}
+use super::super::support::{
+    CrlErrorEvents, TestProvider,
+    backend::{OpenSsl, Rustls, TestBackend, VerificationFailure},
+    certs::{base_config, ca, ca_params, crl, identity, server_cert, server_config, snapshot},
+    grpc::{await_peer_identity, connector, peer_identity, start_server},
+    wait_for_snapshot,
+};
+use crate::{helloworld, tests::make_test_cert};
+use rcgen::{CertifiedIssuer, KeyPair};
+use rustls::{CertificateError, ClientConfig, ServerConfig, pki_types::UnixTime};
+use std::{
+    net::Shutdown,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::oneshot;
+use tonic::transport::Endpoint;
+use tonic_tls_xds::{
+    CertificateData, CertificateProvider, CrlSelection, CrlSource, FileWatcherConfig,
+    FileWatcherProvider,
+};
 
 #[derive(Debug)]
 struct Clock(AtomicU64);
@@ -89,13 +58,6 @@ fn config(clock: Arc<Clock>) -> ClientConfig {
     config
 }
 
-pub(super) fn snapshot(
-    issuer: &CertifiedIssuer<'_, KeyPair>,
-    crls: Vec<Vec<u8>>,
-) -> CertificateData {
-    CertificateData::new(Some(issuer.pem().into_bytes()), None, Some(crls)).unwrap()
-}
-
 type Pair<B> = tonic_tls_xds::ConnectorPair<tokio::io::DuplexStream, <B as TestBackend>::Connector>;
 
 fn build_with_clock(data: &CertificateData, clock: Arc<Clock>) -> Pair<Rustls> {
@@ -118,32 +80,6 @@ fn build<B: TestBackend>(data: &CertificateData) -> Pair<B> {
     try_build::<B>(data).unwrap()
 }
 
-pub(super) struct CrlErrorEvents(pub(super) Arc<AtomicUsize>, pub(super) &'static str);
-
-impl tracing::Subscriber for CrlErrorEvents {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        metadata.target() == self.1 && *metadata.level() == tracing::Level::ERROR
-    }
-
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-
-    fn event(&self, event: &tracing::Event<'_>) {
-        if self.enabled(event.metadata()) {
-            self.0.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn enter(&self, _: &tracing::span::Id) {}
-
-    fn exit(&self, _: &tracing::span::Id) {}
-}
-
 fn build_with_error_count<B: TestBackend>(data: &CertificateData) -> (Pair<B>, usize) {
     let errors = Arc::new(AtomicUsize::new(0));
     let connector =
@@ -151,20 +87,6 @@ fn build_with_error_count<B: TestBackend>(data: &CertificateData) -> (Pair<B>, u
             build::<B>(data)
         });
     (connector, errors.load(Ordering::Relaxed))
-}
-
-pub(super) fn server_config(chain: &[&rcgen::Certificate], key: &KeyPair) -> Arc<ServerConfig> {
-    Arc::new(
-        ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(
-                chain.iter().map(|cert| cert.der().clone()).collect(),
-                PrivateKeyDer::from_pem_slice(key.serialize_pem().as_bytes()).unwrap(),
-            )
-            .unwrap(),
-    )
 }
 
 async fn handshake<B: TestBackend>(

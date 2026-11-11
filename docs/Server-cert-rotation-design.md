@@ -30,10 +30,10 @@ separation in upstream `tonic-xds`, without copying their behavior wholesale.
 
 ## Current state
 
-Our [provider API](../tonic-tls-xds/src/cert_provider.rs) is backend-neutral, and
-the [reloadable client connector](../tonic-tls-xds/src/reloadable_tls_connector.rs)
+Our [provider API](../tonic-tls-xds/src/provider/mod.rs) is backend-neutral, and
+the [reloadable client connector](../tonic-tls-xds/src/client/mod.rs)
 caches parsed configurations by snapshot `Arc` identity. The
-[reloadable server acceptor](../tonic-tls-xds/src/reloadable_tls_acceptor.rs)
+[reloadable server acceptor](../tonic-tls-xds/src/server/acceptor.rs)
 uses the same provider contract, with built-in rustls and OpenSSL server factories.
 
 The core crate already exports `TlsAcceptor`, `Incoming`, and `incoming_inner`.
@@ -394,7 +394,7 @@ trusted by the server are separate rollout directions.
    features if using the core stream wrappers. Those types are feature-gated;
    current client adapters do not need this forwarding.
 4. Add shared server scenarios using the existing
-   [backend test pattern](../tonic-tls-tests/src/xds_tests/backend.rs), with
+   [backend test pattern](../tonic-tls-tests/src/xds_tests/support/backend.rs), with
    concrete native stream types and backend-specific error assertions. Keep
    native-only tests separate and retain manual rotation tests.
 5. Update the crate description, API docs, and user guide when implemented.

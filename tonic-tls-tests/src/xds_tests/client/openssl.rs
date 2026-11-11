@@ -1,5 +1,7 @@
-use super::crl_tests::{ca, ca_params, crl, server_cert, server_config, snapshot};
-use super::identity;
+use super::super::support::{
+    backend::assert_openssl_verification_error as assert_verification_error,
+    certs::{ca, ca_params, crl, identity, roots, server_cert, server_config, snapshot},
+};
 use crate::tests::make_test_cert;
 use openssl::{
     ssl::{Ssl, SslAcceptor, SslConnector, SslMethod, SslVerifyMode, SslVersion},
@@ -72,20 +74,6 @@ async fn handshake(
     let (mut client, mut server) = connect_pair(connector, server, domain).await?;
     assert_exchange(&mut client, &mut server).await;
     Ok(())
-}
-
-pub(super) fn assert_verification_error(error: &tonic_tls::Error) {
-    let ssl_error = error.downcast_ref::<openssl::ssl::Error>().unwrap();
-    assert_eq!(ssl_error.code(), openssl::ssl::ErrorCode::SSL);
-    assert!(
-        ssl_error
-            .ssl_error()
-            .unwrap()
-            .errors()
-            .iter()
-            .any(|error| error.reason() == Some("certificate verify failed")),
-        "expected certificate verification failure: {error}",
-    );
 }
 
 #[test]
@@ -245,7 +233,7 @@ async fn snapshot_identity_replaces_base_key_algorithm_and_entire_chain() {
         CertificateData::new(None, Some(identity(&direct, &direct_key)), None).unwrap();
     let crypto = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
-        Arc::new(super::roots(&[root.as_ref()])),
+        Arc::new(roots(&[root.as_ref()])),
         crypto.clone(),
     )
     .build()
