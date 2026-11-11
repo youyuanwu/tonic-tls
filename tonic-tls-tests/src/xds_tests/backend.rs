@@ -117,6 +117,92 @@ impl TestBackend for OpenSsl {
     }
 }
 
+pub(super) trait TestServerBackend: TestBackend + Send + Sync + 'static {
+    type ServerTcpStream: AsyncRead
+        + AsyncWrite
+        + tonic::transport::server::Connected
+        + Send
+        + Unpin
+        + 'static;
+    type ServerDuplexStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
+    type Acceptor: tonic_tls::TlsAcceptor<TcpStream, TlsStream = Self::ServerTcpStream>
+        + tonic_tls::TlsAcceptor<DuplexStream, TlsStream = Self::ServerDuplexStream>;
+    type ServerFactory: tonic_tls_xds::TlsAcceptorFactory<TcpStream, Acceptor = Self::Acceptor>
+        + tonic_tls_xds::TlsAcceptorFactory<DuplexStream, Acceptor = Self::Acceptor>;
+
+    fn server_factory(config: tonic_tls_xds::ServerConfig) -> Self::ServerFactory;
+    fn peer_leaf(
+        request: &tonic::Request<super::HelloRequest>,
+    ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status>;
+    fn assert_invalid_certificate(error: &tonic_tls::Error);
+}
+
+impl TestServerBackend for Rustls {
+    type ServerTcpStream = tonic_tls::rustls::TlsStream<TcpStream>;
+    type ServerDuplexStream = tonic_tls::rustls::TlsStream<DuplexStream>;
+    type Acceptor = tonic_tls_xds::rustls::TlsAcceptor;
+    type ServerFactory = tonic_tls_xds::rustls::TlsAcceptorFactory;
+
+    fn server_factory(config: tonic_tls_xds::ServerConfig) -> Self::ServerFactory {
+        Self::ServerFactory::new(config, Arc::new(rustls::crypto::ring::default_provider()))
+    }
+
+    fn peer_leaf(
+        request: &tonic::Request<super::HelloRequest>,
+    ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
+        request
+            .extensions()
+            .get::<tonic_tls::rustls::SslConnectInfo<super::TcpConnectInfo>>()
+            .and_then(|info| info.peer_certs())
+            .and_then(|certs| certs.first().cloned())
+            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))
+    }
+
+    fn assert_invalid_certificate(error: &tonic_tls::Error) {
+        let error = error
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<rustls::Error>()
+            .unwrap();
+        assert!(matches!(error, rustls::Error::InvalidCertificate(_)));
+    }
+}
+
+impl TestServerBackend for OpenSsl {
+    type ServerTcpStream = tonic_tls::openssl::SslStream<TcpStream>;
+    type ServerDuplexStream = tonic_tls::openssl::SslStream<DuplexStream>;
+    type Acceptor = tonic_tls_xds::openssl::TlsAcceptor;
+    type ServerFactory = tonic_tls_xds::openssl::TlsAcceptorFactory;
+
+    fn server_factory(config: tonic_tls_xds::ServerConfig) -> Self::ServerFactory {
+        Self::ServerFactory::new(config)
+    }
+
+    fn peer_leaf(
+        request: &tonic::Request<super::HelloRequest>,
+    ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
+        let certs = request
+            .extensions()
+            .get::<tonic_tls::openssl::SslConnectInfo<super::TcpConnectInfo>>()
+            .and_then(|info| info.peer_certs())
+            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))?;
+        let leaf = certs
+            .first()
+            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))?;
+        leaf.to_der()
+            .map(rustls::pki_types::CertificateDer::from)
+            .map_err(|error| {
+                tonic::Status::internal(format!("client certificate encoding failed: {error}"))
+            })
+    }
+
+    fn assert_invalid_certificate(error: &tonic_tls::Error) {
+        super::openssl_tests::assert_verification_error(error);
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct CountingFactory<F> {
     pub inner: F,

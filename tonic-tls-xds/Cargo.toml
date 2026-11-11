@@ -31,7 +31,7 @@ pki-types = { workspace = true, features = ["std"], optional = true }
 [features]
 default = []
 rustls = ["dep:tokio-rustls", "dep:webpki", "tokio-rustls/tls12", "tonic-tls/rustls"]
-openssl = ["dep:openssl", "dep:tokio-openssl", "dep:openssl-sys", "dep:foreign-types", "dep:pki-types"]
+openssl = ["dep:openssl", "dep:tokio-openssl", "dep:openssl-sys", "dep:foreign-types", "dep:pki-types", "tonic-tls/openssl"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

@@ -1,13 +1,13 @@
 # Provider-driven server TLS rotation
 
-Status: **Implemented for rustls**; OpenSSL server support remains **proposed**.
+Status: **Implemented for rustls and OpenSSL**.
 Source comparisons verified on 2026-11-10. See the
-[server usage guide](../tonic-tls-xds/README.md#server-rotation-rustls) for the
+[server usage guide](../tonic-tls-xds/README.md#server-rotation) for the
 implemented API and policies.
 
 ## Summary
 
-Provide server-side rotation in `tonic-tls-xds` for rustls, with OpenSSL planned. Reuse
+Provide server-side rotation in `tonic-tls-xds` for rustls and OpenSSL. Reuse
 `CertificateProvider`, `CertificateData`, and `FileWatcherProvider`, but build and
 cache a complete immutable server acceptor for each published snapshot.
 
@@ -34,7 +34,7 @@ Our [provider API](../tonic-tls-xds/src/cert_provider.rs) is backend-neutral, an
 the [reloadable client connector](../tonic-tls-xds/src/reloadable_tls_connector.rs)
 caches parsed configurations by snapshot `Arc` identity. The
 [reloadable server acceptor](../tonic-tls-xds/src/reloadable_tls_acceptor.rs)
-uses the same provider contract, with a built-in rustls server factory.
+uses the same provider contract, with built-in rustls and OpenSSL server factories.
 
 The core crate already exports `TlsAcceptor`, `Incoming`, and `incoming_inner`.
 Its [incoming loop](../tonic-tls/src/server.rs) clones an acceptor for each
@@ -66,10 +66,9 @@ atomic.
 
 ### Goals and non-goals
 
-The rustls implementation supports one server identity per acceptor, optional or
+Both implementations support one server identity per acceptor, optional or
 required mTLS, client CA rotation, CRL rotation, tonic incoming streams, and raw
-Tokio streams. Both existing backend features remain optional; the OpenSSL
-feature currently provides only a client adapter.
+Tokio streams. Both existing backend features remain optional.
 
 It does not add xDS discovery/SDS, SNI-based multi-identity routing, encrypted
 keys, remote CRL fetching, separate live CRL providers, other TLS backends,
@@ -78,8 +77,7 @@ the existing client connector's API or failure semantics.
 
 ## API
 
-The common API and rustls factory below are implemented. References to an
-OpenSSL server factory remain design-only; that factory is not available.
+The common API and both backend factories below are implemented.
 
 ### Common server settings
 
@@ -155,8 +153,8 @@ Add `ReloadableTlsAcceptor<IO, F>` implementing `tonic_tls::TlsAcceptor<IO>`:
 - `incoming(self, incoming)` delegates to `tonic_tls::incoming_inner`, returning
   a tonic-compatible stream. No second accept loop is introduced.
 
-The implemented built-in factory is `rustls::TlsAcceptorFactory`; a future
-`openssl::TlsAcceptorFactory` would take the same common `ServerConfig`. The rustls
+The built-in factories are `rustls::TlsAcceptorFactory` and
+`openssl::TlsAcceptorFactory`, both taking the common `ServerConfig`. The rustls
 factory additionally takes an explicit `Arc<rustls::crypto::CryptoProvider>`,
 avoiding implicit installation of a process-wide crypto provider.
 
@@ -189,8 +187,7 @@ tonic::transport::Server::builder()
 ```
 
 Here `crypto_provider`, `tcp_incoming`, and `greeter` are application inputs.
-The proposed OpenSSL factory would use
-`openssl::TlsAcceptorFactory::new(config)`; this is not implemented.
+For OpenSSL, use `openssl::TlsAcceptorFactory::new(config)` instead.
 For ordinary server-authenticated TLS,
 omit client roots/CRLs and retain `ClientAuth::Disabled`.
 
@@ -287,7 +284,7 @@ effective identity and client trust unambiguous.
 See the pinned rustls [server configuration][rustls-server] and
 [client verifier builder][rustls-client-verifier] for the relevant APIs.
 
-### OpenSSL (not implemented)
+### OpenSSL
 
 Create a fresh crate-owned `SslAcceptor`/`SSL_CTX` for each changed snapshot.
 Accept no native context, builder, verification callback, PSK callback, or
@@ -401,8 +398,8 @@ trusted by the server are separate rollout directions.
    concrete native stream types and backend-specific error assertions. Keep
    native-only tests separate and retain manual rotation tests.
 5. Update the crate description, API docs, and user guide when implemented.
-   The common API and rustls adapter are implemented; the OpenSSL server
-   adapter remains proposed. Existing native/manual server APIs are unchanged.
+   The common API and both adapters are implemented. Existing native/manual
+   server APIs are unchanged.
 
 Required coverage:
 
