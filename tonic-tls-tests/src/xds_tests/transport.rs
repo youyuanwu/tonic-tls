@@ -7,23 +7,19 @@ use std::{
     time::Duration,
 };
 
-use rustls::{
-    ClientConfig,
-    pki_types::{PrivateKeyDer, pem::PemObject},
-};
 use tokio::net::TcpStream;
 use tonic::transport::{Endpoint, Uri};
 use tonic_tls::{TcpTransport, Transport};
 use tonic_tls_xds::xds::ConfiguredMakeConnector;
 use tonic_xds::{XdsChannelBuilder, XdsChannelGrpc};
 
-use super::support::ads::{CLUSTER, start_control_plane};
+use super::support::{
+    ads::{CLUSTER, start_control_plane},
+    backend::{OpenSsl, Rustls, TestBackend},
+};
 use crate::{
     helloworld::{HelloRequest, greeter_client::GreeterClient},
-    test_support::{
-        certs::{base_config, roots},
-        grpc::{start_named_server, start_server},
-    },
+    test_support::grpc::{start_named_server, start_server},
     tests::make_test_cert,
 };
 
@@ -54,27 +50,7 @@ async fn peer(client: &mut Client) -> Result<String, tonic::Status> {
     Ok(client.say_hello(request).await?.into_inner().message)
 }
 
-fn client_config(
-    server: &rcgen::Certificate,
-    client: &rcgen::Certificate,
-    key: &rcgen::KeyPair,
-) -> Arc<ClientConfig> {
-    let mut tls =
-        ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(roots(&[server]))
-            .with_client_auth_cert(
-                vec![client.der().clone()],
-                PrivateKeyDer::from_pem_slice(key.serialize_pem().as_bytes()).unwrap(),
-            )
-            .unwrap();
-    tls.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
-    Arc::new(tls)
-}
-
-#[tokio::test]
-async fn rustls_xds_uses_configured_tls_connector() {
+async fn uses_configured_tls_connector<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint, shutdown, server_task) =
@@ -89,13 +65,13 @@ async fn rustls_xds_uses_configured_tls_connector() {
     let attempts = Arc::new(AtomicUsize::new(0));
     let factory = ConfiguredMakeConnector::new(
         CLUSTER,
-        tonic_tls::rustls::TlsConnector::new(
+        B::connector(
             CountingTransport {
                 inner: TcpTransport::from_endpoint(&endpoint),
                 attempts: attempts.clone(),
             },
-            client_config(&server, &client_cert, &client_key),
-            "localhost".try_into().unwrap(),
+            &[&server],
+            Some((&client_cert, &client_key)),
         ),
     );
     let (config, _updates, ads_shutdown, ads_task) = start_control_plane(address).await;
@@ -114,8 +90,7 @@ async fn rustls_xds_uses_configured_tls_connector() {
     ads_task.await.unwrap();
 }
 
-#[tokio::test]
-async fn rustls_xds_switches_endpoints_after_eds_update() {
+async fn switches_endpoints_after_eds_update<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint_a, shutdown_a, task_a) =
@@ -132,13 +107,13 @@ async fn rustls_xds_switches_endpoints_after_eds_update() {
             .unwrap()
     });
     let attempts = Arc::new(AtomicUsize::new(0));
-    let connector = tonic_tls::rustls::TlsConnector::new(
+    let connector = B::connector(
         CountingTransport {
             inner: TcpTransport::from_endpoint(&endpoint_a),
             attempts: attempts.clone(),
         },
-        client_config(&server, &client_cert, &client_key),
-        "localhost".try_into().unwrap(),
+        &[&server],
+        Some((&client_cert, &client_key)),
     );
     let (config, updates, ads_shutdown, ads_task) = start_control_plane(address_a).await;
     let mut client = Client::new(
@@ -205,8 +180,7 @@ async fn rustls_xds_switches_endpoints_after_eds_update() {
     ads_task.await.unwrap();
 }
 
-#[tokio::test]
-async fn configured_factory_rejects_unregistered_clusters_before_connecting() {
+async fn rejects_unregistered_clusters_before_connecting<B: TestBackend>() {
     use tonic_xds::{ClusterConfig, Connector, EndpointChannel, MakeConnector};
 
     struct ObserveRejection {
@@ -237,13 +211,13 @@ async fn configured_factory_rejects_unregistered_clusters_before_connecting() {
     let (_listener, address) = crate::tests::create_listener_server().await;
     let endpoint = Endpoint::from_shared(format!("http://{address}")).unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));
-    let connector = tonic_tls::rustls::TlsConnector::new(
+    let connector = B::connector(
         CountingTransport {
             inner: TcpTransport::from_endpoint(&endpoint),
             attempts: attempts.clone(),
         },
-        Arc::new(base_config(&[])),
-        "localhost".try_into().unwrap(),
+        &[],
+        None,
     );
     let (config, _updates, shutdown, task) = start_control_plane(address).await;
     let (errors_tx, mut errors_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -277,3 +251,29 @@ async fn configured_factory_rejects_unregistered_clusters_before_connecting() {
     shutdown.cancel();
     task.await.unwrap();
 }
+
+macro_rules! xds_tests {
+    ($module:ident, $backend:ty) => {
+        mod $module {
+            use super::*;
+
+            #[tokio::test]
+            async fn uses_configured_tls_connector() {
+                super::uses_configured_tls_connector::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn switches_endpoints_after_eds_update() {
+                super::switches_endpoints_after_eds_update::<$backend>().await;
+            }
+
+            #[tokio::test]
+            async fn rejects_unregistered_clusters_before_connecting() {
+                super::rejects_unregistered_clusters_before_connecting::<$backend>().await;
+            }
+        }
+    };
+}
+
+xds_tests!(rustls_xds, Rustls);
+xds_tests!(openssl_xds, OpenSsl);

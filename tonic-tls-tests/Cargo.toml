@@ -33,6 +33,7 @@ tonic-xds.workspace = true
 envoy-types.workspace = true
 async-stream.workspace = true
 tower.workspace = true
+hyper-util.workspace = true
 futures.workspace = true
 tokio-native-tls.workspace = true
 native-tls.workspace = true
