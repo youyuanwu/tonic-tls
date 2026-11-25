@@ -153,13 +153,18 @@ response behavior.
 ### Implemented coverage
 
 All integration cases are defined in the
-[transport test file](../tonic-tls-tests/src/xds_tests/transport.rs):
+[transport test file](../tonic-tls-tests/src/xds_tests/transport.rs). Its
+`rustls_xds` and `openssl_xds` modules instantiate the same three scenarios using
+[backend adapters](../tonic-tls-tests/src/xds_tests/support/backend.rs), following
+the rotation suites' generic-scenario and registration-macro pattern. These
+adapters use the existing TLS URI services; both client backends authenticate to
+the shared rustls mTLS server fixture.
 
-| Test | What it establishes |
+| Scenario (each backend) | What it establishes |
 |---|---|
-| `rustls_xds_uses_configured_tls_connector` | Plaintext ADS discovery reaches a static mTLS service through our configured transport and factory. |
-| `rustls_xds_switches_endpoints_after_eds_update` | The same client/channel switches from A to B after an EDS replacement, subsequent replies stay on B, and a direct RPC proves A remains healthy. |
-| `configured_factory_rejects_unregistered_clusters_before_connecting` | An unregistered cluster produces the factory's invalid-input error before any data-plane connection attempt. |
+| `uses_configured_tls_connector` | Plaintext ADS discovery reaches a static mTLS service through our configured transport and factory. |
+| `switches_endpoints_after_eds_update` | The same client/channel switches from A to B after an EDS replacement, subsequent replies stay on B, and a direct RPC proves A remains healthy. |
+| `rejects_unregistered_clusters_before_connecting` | An unregistered cluster produces the factory's invalid-input error before any data-plane connection attempt. |
 
 The EDS test keeps server and client TLS credentials fixed. It uses a bounded
 wait driven by RPC results, not a fixed sleep, and checks that the new endpoint

@@ -37,13 +37,16 @@ Integration tests in the existing test crate are separated by behavior:
   Client channel scenarios and server channel/handshake scenarios have separate
   modules; backend-neutral scenarios are reused for rustls and OpenSSL.
 - [xDS discovery](../tonic-tls-tests/src/xds_tests/): configured TLS connectivity,
-  cluster selection, and EDS replacement with fixed credentials.
+  cluster selection, and EDS replacement with fixed credentials, each run
+  against rustls and OpenSSL client connectors.
 
 Shared certificate and authenticated gRPC server fixtures live in
 [test_support](../tonic-tls-tests/src/test_support/). Provider doubles, backend
 adapters, and reconnect assertions stay in
 [reloadable support](../tonic-tls-tests/src/reloadable_tests/support/);
-the [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) stays with xDS.
+the [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) and
+[discovery backend adapters](../tonic-tls-tests/src/xds_tests/support/backend.rs)
+stay with xDS.
 Unit tests remain beside their implementations.
 
 Run these suites with
@@ -66,8 +69,8 @@ OpenSSL 1.1.1 or newer and its development libraries are required.
 
 ## Upstream xDS custom connectors
 
-Enable `features = ["xds", "rustls"]` to combine upstream discovery with our
-existing rustls connectors and providers. The `xds` feature alone is
+Enable `features = ["xds", "rustls"]` or `["xds", "openssl"]` to combine upstream
+discovery with our existing TLS connectors and providers. The `xds` feature alone is
 backend-neutral and does not depend on rustls. The workspace pins upstream
 `tonic-xds` to `0.1.0-alpha.5` because its custom connector API is pre-release.
 ADS uses plaintext bootstrap credentials (`insecure`); control-plane TLS is
@@ -110,9 +113,12 @@ design's `RustlsMakeConnector` remain blocked on upstream backend-neutral
 metadata access. No deferred constructor or new verifier is added in this stage;
 the existing public reloadable constructor still validates eagerly.
 
-Run the plaintext-ADS/static-rustls integration, EDS endpoint-replacement, and
-cluster-selection tests with
+Run the plaintext-ADS/static-mTLS integration, EDS endpoint-replacement, and
+cluster-selection scenarios for both rustls and OpenSSL with
 `cargo test -p tonic-tls-tests --lib xds_tests::transport::`.
+The `rustls_xds::` and `openssl_xds::` submodules instantiate the same scenarios
+through the backend-test pattern used by the rotation suites. Both use the
+existing rustls mTLS server fixture.
 The EDS test updates the advertised endpoint from A to B while retaining the
 same client and fixed TLS credentials, then confirms A remains responsive.
 Certificate rotation remains covered by the connector/provider suites, not by
