@@ -17,13 +17,13 @@ use tonic_tls::{TcpTransport, Transport};
 use tonic_tls_xds::xds::ConfiguredMakeConnector;
 use tonic_xds::{XdsChannelBuilder, XdsChannelGrpc};
 
-use super::support::{
-    ads::{CLUSTER, start_control_plane},
-    certs::roots,
-    grpc::{start_named_server, start_server},
-};
+use super::support::ads::{CLUSTER, start_control_plane};
 use crate::{
     helloworld::{HelloRequest, greeter_client::GreeterClient},
+    test_support::{
+        certs::{base_config, roots},
+        grpc::{start_named_server, start_server},
+    },
     tests::make_test_cert,
 };
 
@@ -242,7 +242,7 @@ async fn configured_factory_rejects_unregistered_clusters_before_connecting() {
             inner: TcpTransport::from_endpoint(&endpoint),
             attempts: attempts.clone(),
         },
-        Arc::new(super::support::certs::base_config(&[])),
+        Arc::new(base_config(&[])),
         "localhost".try_into().unwrap(),
     );
     let (config, _updates, shutdown, task) = start_control_plane(address).await;

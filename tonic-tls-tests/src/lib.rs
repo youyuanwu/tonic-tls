@@ -22,6 +22,12 @@ mod openssl_tests;
 mod cert_rotation_tests;
 
 #[cfg(test)]
+mod reloadable_tests;
+
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
 mod xds_tests;
 
 #[cfg(all(test, target_os = "windows"))]

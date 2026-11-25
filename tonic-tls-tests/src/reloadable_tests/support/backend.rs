@@ -1,5 +1,5 @@
-use super::certs::base_config;
 use crate::helloworld::HelloRequest;
+use crate::test_support::certs::base_config;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -11,13 +11,13 @@ use tokio::{
 use tonic::transport::server::TcpConnectInfo;
 use tonic_tls_xds::{CertificateData, ConnectorPair, Identity, TlsConnectorFactory};
 
-pub(in crate::xds_tests) enum VerificationFailure {
+pub(in crate::reloadable_tests) enum VerificationFailure {
     Revoked,
     UnknownRevocationStatus,
     CrlSignature,
 }
 
-pub(in crate::xds_tests) trait TestBackend {
+pub(in crate::reloadable_tests) trait TestBackend {
     type TcpStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     type DuplexStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
     type Connector: tonic_tls::TlsConnector<TcpStream, TlsStream = Self::TcpStream>
@@ -33,7 +33,7 @@ pub(in crate::xds_tests) trait TestBackend {
     fn assert_verification_error(error: &tonic_tls::Error, expected: VerificationFailure);
 }
 
-pub(in crate::xds_tests) struct Rustls;
+pub(in crate::reloadable_tests) struct Rustls;
 
 impl TestBackend for Rustls {
     type TcpStream = tokio_rustls::client::TlsStream<TcpStream>;
@@ -84,7 +84,7 @@ impl TestBackend for Rustls {
     }
 }
 
-pub(in crate::xds_tests) struct OpenSsl;
+pub(in crate::reloadable_tests) struct OpenSsl;
 
 impl TestBackend for OpenSsl {
     type TcpStream = tokio_openssl::SslStream<TcpStream>;
@@ -119,7 +119,7 @@ impl TestBackend for OpenSsl {
     }
 }
 
-pub(in crate::xds_tests) trait TestServerBackend:
+pub(in crate::reloadable_tests) trait TestServerBackend:
     TestBackend + Send + Sync + 'static
 {
     type ServerTcpStream: AsyncRead
@@ -208,12 +208,12 @@ impl TestServerBackend for OpenSsl {
 }
 
 #[derive(Clone)]
-pub(in crate::xds_tests) struct CountingFactory<F> {
+pub(in crate::reloadable_tests) struct CountingFactory<F> {
     pub inner: F,
     pub builds: Arc<AtomicUsize>,
 }
 
-pub(in crate::xds_tests) fn assert_openssl_verification_error(error: &tonic_tls::Error) {
+pub(in crate::reloadable_tests) fn assert_openssl_verification_error(error: &tonic_tls::Error) {
     let ssl_error = error.downcast_ref::<openssl::ssl::Error>().unwrap();
     assert_eq!(ssl_error.code(), openssl::ssl::ErrorCode::SSL);
     assert!(

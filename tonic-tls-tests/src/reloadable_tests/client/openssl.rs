@@ -1,8 +1,10 @@
-use super::super::support::{
-    backend::assert_openssl_verification_error as assert_verification_error,
-    certs::{ca, ca_params, crl, identity, roots, server_cert, server_config, snapshot},
+use super::super::support::backend::assert_openssl_verification_error as assert_verification_error;
+use crate::{
+    test_support::certs::{
+        ca, ca_params, crl, identity, roots, server_cert, server_config, snapshot,
+    },
+    tests::make_test_cert,
 };
-use crate::tests::make_test_cert;
 use openssl::{
     ssl::{Ssl, SslAcceptor, SslConnector, SslMethod, SslVerifyMode, SslVersion},
     x509::X509,

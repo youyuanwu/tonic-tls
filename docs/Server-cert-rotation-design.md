@@ -43,7 +43,7 @@ continues accepting. The rustls and OpenSSL stream wrappers implement tonic's
 `Connected` trait.
 
 The existing [server rotation guide](Cert-rotation.md) and
-[tests](../tonic-tls-tests/src/cert_rotation_tests.rs) demonstrate manual
+[tests](../tonic-tls-tests/src/cert_rotation_tests/) demonstrate manual
 identity rotation using native callbacks. They do not provide coordinated
 rotation of server identity, client trust, and CRLs.
 
@@ -394,7 +394,7 @@ trusted by the server are separate rollout directions.
    features if using the core stream wrappers. Those types are feature-gated;
    current client adapters do not need this forwarding.
 4. Add shared server scenarios using the existing
-   [backend test pattern](../tonic-tls-tests/src/xds_tests/support/backend.rs), with
+   [backend test pattern](../tonic-tls-tests/src/reloadable_tests/support/backend.rs), with
    concrete native stream types and backend-specific error assertions. Keep
    native-only tests separate and retain manual rotation tests.
 5. Update the crate description, API docs, and user guide when implemented.

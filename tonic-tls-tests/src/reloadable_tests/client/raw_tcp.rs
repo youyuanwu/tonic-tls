@@ -1,9 +1,8 @@
-use super::super::support::{
-    TestProvider,
-    certs::{base_config, identity, roots},
-    wait_for_snapshot,
+use super::super::support::{TestProvider, wait_for_snapshot};
+use crate::{
+    test_support::certs::{base_config, identity, roots},
+    tests::{create_listener_server, make_test_cert},
 };
-use crate::tests::{create_listener_server, make_test_cert};
 use rustls::{
     ClientConfig, ServerConfig,
     pki_types::{PrivateKeyDer, pem::PemObject},
