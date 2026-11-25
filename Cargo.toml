@@ -4,6 +4,9 @@ members = [
  "tonic-tls", "tonic-tls-tests", "tonic-tls-xds"
 ]
 
+[workspace.package]
+rust-version = "1.90.0"
+
 [workspace.dependencies]
 tonic-tls = { version = "0.8.0", path = "tonic-tls", default-features = false }
 tonic-tls-xds = { path = "tonic-tls-xds", default-features = false }
