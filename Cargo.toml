@@ -15,6 +15,7 @@ pki-types = { package = "rustls-pki-types", version = "1" }
 async-stream = "0.3"
 futures = { version = "0.3", default-features = false }
 tonic = "0.14"
+tonic-xds = { version = "=0.1.0-alpha.5", default-features = false }
 tower = "0.5"
 hyper = "1"
 hyper-util = "0.1"
@@ -48,3 +49,4 @@ tonic-prost-build = "0.14"
 tonic-prost = "0.14"
 arc-swap = "1"
 tempfile = "3"
+envoy-types = "0.7"

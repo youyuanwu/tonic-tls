@@ -28,7 +28,11 @@ rcgen.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
 tonic-tls = { workspace = true, features = ["openssl-ktls", "native", "rustls", "openssl", "schannel"] }
-tonic-tls-xds = { workspace = true, features = ["rustls", "openssl"] }
+tonic-tls-xds = { workspace = true, features = ["rustls", "openssl", "xds"] }
+tonic-xds.workspace = true
+envoy-types.workspace = true
+async-stream.workspace = true
+tower.workspace = true
 futures.workspace = true
 tokio-native-tls.workspace = true
 native-tls.workspace = true

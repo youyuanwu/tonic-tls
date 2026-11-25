@@ -16,6 +16,8 @@ readme = "README.md"
 tonic-tls.workspace = true
 tokio = { workspace = true, features = ["fs", "rt", "time"] }
 tonic.workspace = true
+tonic-xds = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
 tower.workspace = true
 hyper-util.workspace = true
 futures.workspace = true
@@ -30,6 +32,7 @@ pki-types = { workspace = true, features = ["std"], optional = true }
 
 [features]
 default = []
+xds = ["dep:tonic-xds", "dep:hyper"]
 rustls = ["dep:tokio-rustls", "dep:webpki", "tokio-rustls/tls12", "tonic-tls/rustls"]
 openssl = ["dep:openssl", "dep:tokio-openssl", "dep:openssl-sys", "dep:foreign-types", "dep:pki-types", "tonic-tls/openssl"]
 
