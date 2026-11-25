@@ -28,12 +28,27 @@ See [custom connectors](#upstream-xds-custom-connectors) and the
 The crate root and backend modules re-export the public APIs; internal file
 organization does not change application imports.
 
-Integration tests live in [xds_tests](../tonic-tls-tests/src/xds_tests/), grouped
-into client scenarios (rotation, CRLs, raw TCP, and backend-specific behavior),
-server rotation scenarios, and upstream transport integration. Shared providers,
-certificate fixtures, backend
-adapters, and gRPC helpers live in its `support` directory, not in test suites.
-Run them with `cargo test -p tonic-tls-tests --lib -- xds_tests::`.
+Integration tests in the existing test crate are separated by behavior:
+
+- [Native rotation](../tonic-tls-tests/src/cert_rotation_tests/): rustls resolvers
+  and OpenSSL callbacks, separate from the reloadable-provider APIs.
+- [Reloadable TLS](../tonic-tls-tests/src/reloadable_tests/): client/server
+  rotation, CRLs, caching, invalid material, and backend-specific behavior.
+  Client channel scenarios and server channel/handshake scenarios have separate
+  modules; backend-neutral scenarios are reused for rustls and OpenSSL.
+- [xDS discovery](../tonic-tls-tests/src/xds_tests/): configured TLS connectivity,
+  cluster selection, and EDS replacement with fixed credentials.
+
+Shared certificate and authenticated gRPC server fixtures live in
+[test_support](../tonic-tls-tests/src/test_support/). Provider doubles, backend
+adapters, and reconnect assertions stay in
+[reloadable support](../tonic-tls-tests/src/reloadable_tests/support/);
+the [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) stays with xDS.
+Unit tests remain beside their implementations.
+
+Run these suites with
+`cargo test -p tonic-tls-tests --lib -- cert_rotation_tests:: reloadable_tests:: xds_tests::`.
+Use any one of those selectors to run only its suite.
 
 ## Installation
 

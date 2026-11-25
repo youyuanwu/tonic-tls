@@ -40,7 +40,7 @@ in their source files rather than duplicating them here.
 | [Rustls client implementation](../tonic-tls-xds/src/rustls/client.rs) | Existing client factory, PEM application, verifier replacement, and resumption policy. |
 | [Integration tests](../tonic-tls-tests/src/xds_tests/transport.rs) | Static mTLS connectivity, EDS endpoint replacement, and unregistered-cluster rejection. |
 | [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) | Plaintext control plane, static LDS/CDS resources, and mutable EDS snapshots. |
-| [gRPC fixtures](../tonic-tls-tests/src/xds_tests/support/grpc.rs) | Authenticated test servers, optional server-identifying replies, and shared server setup. |
+| [gRPC fixtures](../tonic-tls-tests/src/test_support/grpc.rs) | Authenticated test servers, optional server-identifying replies, and shared server setup used by discovery and reloadable TLS tests. |
 
 The [usage guide](../tonic-tls-xds/README.md#upstream-xds-custom-connectors)
 describes installation and the focused test command. The module's compiled
@@ -145,7 +145,7 @@ later changes with increasing resource versions and fresh response nonces.
 ACKs do not trigger another response; NACKs and unsupported subscriptions
 produce explicit errors. Delta ADS is not implemented by this fixture.
 
-The [named-server fixture](../tonic-tls-tests/src/xds_tests/support/grpc.rs)
+The [named-server fixture](../tonic-tls-tests/src/test_support/grpc.rs)
 distinguishes servers by their reply while still authenticating the client's
 certificate. Existing callers retain the original peer-certificate-index
 response behavior.
@@ -166,7 +166,7 @@ wait driven by RPC results, not a fixed sleep, and checks that the new endpoint
 is reached through the configured transport.
 
 Certificate rotation, provider-error recovery, and TLS-session behavior belong
-in the existing [client connector tests](../tonic-tls-tests/src/xds_tests/client/)
+in the existing [client connector tests](../tonic-tls-tests/src/reloadable_tests/client/)
 and [provider implementation tests](../tonic-tls-xds/src/provider/), not in
 xDS-channel tests. Do not duplicate Hyper framing or upstream load-counter tests.
 

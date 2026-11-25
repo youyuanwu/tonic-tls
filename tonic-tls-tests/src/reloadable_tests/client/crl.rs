@@ -1,11 +1,17 @@
 use super::super::support::{
     CrlErrorEvents, TestProvider,
     backend::{OpenSsl, Rustls, TestBackend, VerificationFailure},
-    certs::{base_config, ca, ca_params, crl, identity, server_cert, server_config, snapshot},
-    grpc::{await_peer_identity, connector, peer_identity, start_server},
+    grpc::{await_peer_identity, connector, peer_identity},
     wait_for_snapshot,
 };
-use crate::{helloworld, tests::make_test_cert};
+use crate::{
+    helloworld,
+    test_support::{
+        certs::{base_config, ca, ca_params, crl, identity, server_cert, server_config, snapshot},
+        grpc::start_server,
+    },
+    tests::make_test_cert,
+};
 use rcgen::{CertifiedIssuer, KeyPair};
 use rustls::{CertificateError, ClientConfig, ServerConfig, pki_types::UnixTime};
 use std::{

@@ -1,4 +1,4 @@
-use super::{backend::TestBackend, certs::roots};
+use super::certs::roots;
 use crate::{
     helloworld::{self, HelloReply, HelloRequest},
     tests::create_listener_server,
@@ -21,13 +21,12 @@ use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status,
     transport::{
-        Channel, Endpoint,
+        Endpoint,
         server::{TcpConnectInfo, TcpIncoming},
     },
 };
-use tonic_tls_xds::CertificateProvider;
 
-pub(in crate::xds_tests) struct TestIncoming {
+pub(crate) struct TestIncoming {
     pub inner: TcpIncoming,
     pub first_connection: Option<oneshot::Sender<TcpStream>>,
 }
@@ -86,7 +85,7 @@ impl helloworld::greeter_server::Greeter for PeerGreeter {
     }
 }
 
-pub(in crate::xds_tests) async fn start_server(
+pub(crate) async fn start_server(
     cert: &rcgen::Certificate,
     key: &rcgen::KeyPair,
     clients: &[&rcgen::Certificate],
@@ -95,7 +94,7 @@ pub(in crate::xds_tests) async fn start_server(
     start_server_inner(cert, key, clients, first_connection, None).await
 }
 
-pub(in crate::xds_tests) async fn start_named_server(
+pub(crate) async fn start_named_server(
     cert: &rcgen::Certificate,
     key: &rcgen::KeyPair,
     clients: &[&rcgen::Certificate],
@@ -152,66 +151,4 @@ async fn start_server_inner(
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(5));
     (endpoint, shutdown, task)
-}
-
-pub(in crate::xds_tests) fn connector<B: TestBackend>(
-    endpoint: &Endpoint,
-    factory: B::Factory,
-    provider: Arc<dyn CertificateProvider>,
-) -> tonic_tls_xds::ReloadableTlsConnector<tokio::net::TcpStream, B::Connector> {
-    tonic_tls_xds::ReloadableTlsConnector::new(
-        tonic_tls::TcpTransport::from_endpoint(endpoint),
-        provider,
-        factory,
-    )
-    .unwrap()
-}
-
-pub(in crate::xds_tests) async fn peer_identity(
-    client: &mut helloworld::greeter_client::GreeterClient<Channel>,
-) -> Result<String, Status> {
-    Ok(client
-        .say_hello(HelloRequest {
-            name: "rotation".into(),
-        })
-        .await?
-        .into_inner()
-        .message)
-}
-
-pub(in crate::xds_tests) async fn await_peer_identity(
-    client: &mut helloworld::greeter_client::GreeterClient<Channel>,
-    expected: &str,
-) {
-    let mut attempts = 0;
-    let mut last_error = None;
-    let result = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            attempts += 1;
-            match peer_identity(client).await {
-                Ok(peer) => {
-                    assert_eq!(peer, expected);
-                    break;
-                }
-                Err(status) => {
-                    // The first RPC can race with tonic noticing the closed connection.
-                    assert!(
-                        status.code() == tonic::Code::Unavailable
-                            || (matches!(
-                                status.code(),
-                                tonic::Code::Unknown | tonic::Code::Cancelled
-                            ) && std::error::Error::source(&status).is_some()),
-                        "unexpected reconnect error: {status:?}",
-                    );
-                    last_error = Some(status);
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
-    })
-    .await;
-    assert!(
-        result.is_ok(),
-        "same channel did not reconnect with identity {expected} after {attempts} attempts; last error: {last_error:?}",
-    );
 }

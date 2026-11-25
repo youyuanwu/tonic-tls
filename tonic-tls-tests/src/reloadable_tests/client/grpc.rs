@@ -1,11 +1,14 @@
-use super::support::{
+use super::super::support::{
     TestProvider,
-    backend::{CountingFactory, OpenSsl, Rustls, TestBackend},
-    certs::identity,
-    grpc::{await_peer_identity, connector, peer_identity, start_server},
+    backend::{CountingFactory, TestBackend},
+    grpc::{await_peer_identity, connector, peer_identity},
     wait_for_snapshot,
 };
-use crate::{helloworld, tests::make_test_cert};
+use crate::{
+    helloworld,
+    test_support::{certs::identity, grpc::start_server},
+    tests::make_test_cert,
+};
 use std::{
     net::Shutdown,
     sync::{
@@ -18,12 +21,7 @@ use tokio::sync::oneshot;
 use tonic::transport::Endpoint;
 use tonic_tls_xds::{CertificateData, Identity};
 
-mod crl;
-mod openssl;
-mod raw_tcp;
-mod rustls;
-
-async fn client_identity_rotates_on_channel_reconnect<B: TestBackend>() {
+pub(super) async fn client_identity_rotates_on_channel_reconnect<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (first, first_key) = make_test_cert(vec!["client-1".into()]);
     let (second, second_key) = make_test_cert(vec!["client-2".into()]);
@@ -58,7 +56,7 @@ async fn client_identity_rotates_on_channel_reconnect<B: TestBackend>() {
     task.await.unwrap();
 }
 
-async fn client_file_watcher_rotates_identity<B: TestBackend>() {
+pub(super) async fn client_file_watcher_rotates_identity<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (first, first_key) = make_test_cert(vec!["client-1".into()]);
     let (second, second_key) = make_test_cert(vec!["client-2".into()]);
@@ -159,7 +157,7 @@ async fn client_file_watcher_rotates_identity<B: TestBackend>() {
 }
 
 // Trust must switch servers without changing the client's mTLS identity.
-async fn client_provider_rotates_roots_and_preserves_base_identity<B: TestBackend>() {
+pub(super) async fn client_provider_rotates_roots_and_preserves_base_identity<B: TestBackend>() {
     let (server1, server1_key) = make_test_cert(vec!["localhost".into()]);
     let (server2, server2_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
@@ -225,7 +223,9 @@ async fn client_provider_rotates_roots_and_preserves_base_identity<B: TestBacken
 }
 
 // Prime the cache, reject unavailable/invalid snapshots, then verify recovery.
-async fn client_provider_errors_do_not_fall_back_to_cached_credentials<B: TestBackend>() {
+pub(super) async fn client_provider_errors_do_not_fall_back_to_cached_credentials<
+    B: TestBackend,
+>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint, shutdown, task) =
@@ -285,7 +285,7 @@ async fn client_provider_errors_do_not_fall_back_to_cached_credentials<B: TestBa
 }
 
 // Construction checks parsing and key pairing without opening sockets.
-fn client_connector_rejects_invalid_material_at_construction<B: TestBackend>() {
+pub(super) fn client_connector_rejects_invalid_material_at_construction<B: TestBackend>() {
     let (cert, key) = make_test_cert(vec!["client".into()]);
     let wrong_key = rcgen::KeyPair::generate().unwrap();
     let endpoint = Endpoint::from_static("https://localhost");
@@ -353,39 +353,3 @@ fn client_connector_rejects_invalid_material_at_construction<B: TestBackend>() {
         assert!(result.is_err(), "{name} should be rejected at construction");
     }
 }
-
-macro_rules! rotation_tests {
-    ($module:ident, $backend:ty) => {
-        mod $module {
-            use super::*;
-
-            #[tokio::test]
-            async fn identity_rotates_on_channel_reconnect() {
-                client_identity_rotates_on_channel_reconnect::<$backend>().await;
-            }
-
-            #[tokio::test]
-            async fn file_watcher_rotates_identity() {
-                client_file_watcher_rotates_identity::<$backend>().await;
-            }
-
-            #[tokio::test]
-            async fn roots_rotate_preserving_base_identity() {
-                client_provider_rotates_roots_and_preserves_base_identity::<$backend>().await;
-            }
-
-            #[tokio::test]
-            async fn provider_errors_do_not_fall_back() {
-                client_provider_errors_do_not_fall_back_to_cached_credentials::<$backend>().await;
-            }
-
-            #[test]
-            fn invalid_material_fails_at_construction() {
-                client_connector_rejects_invalid_material_at_construction::<$backend>();
-            }
-        }
-    };
-}
-
-rotation_tests!(rustls_rotation, Rustls);
-rotation_tests!(openssl_rotation, OpenSsl);

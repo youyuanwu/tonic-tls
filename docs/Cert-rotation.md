@@ -101,7 +101,7 @@ uniformly across all backends.
 
 ## Test Coverage
 
-Tests in `tonic-tls-tests/src/cert_rotation_tests.rs`:
+Tests in [cert_rotation_tests](../tonic-tls-tests/src/cert_rotation_tests/):
 
 - **`rustls_cert_rotation`** — `ResolvesServerCert` + `ArcSwap<CertifiedKey>`.
 - **`openssl_cert_rotation`** — `set_client_hello_callback` +

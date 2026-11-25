@@ -6,11 +6,11 @@ use rustls::{
 use std::sync::Arc;
 use tonic_tls_xds::{CertificateData, Identity};
 
-pub(in crate::xds_tests) fn identity(cert: &rcgen::Certificate, key: &KeyPair) -> Identity {
+pub(crate) fn identity(cert: &rcgen::Certificate, key: &KeyPair) -> Identity {
     Identity::from_pem(cert.pem(), key.serialize_pem())
 }
 
-pub(in crate::xds_tests) fn roots(certs: &[&rcgen::Certificate]) -> RootCertStore {
+pub(crate) fn roots(certs: &[&rcgen::Certificate]) -> RootCertStore {
     let mut roots = RootCertStore::empty();
     for cert in certs {
         roots.add(cert.der().clone()).unwrap();
@@ -18,7 +18,7 @@ pub(in crate::xds_tests) fn roots(certs: &[&rcgen::Certificate]) -> RootCertStor
     roots
 }
 
-pub(in crate::xds_tests) fn base_config(certs: &[&rcgen::Certificate]) -> ClientConfig {
+pub(crate) fn base_config(certs: &[&rcgen::Certificate]) -> ClientConfig {
     let mut config =
         ClientConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
             .with_safe_default_protocol_versions()
@@ -29,7 +29,7 @@ pub(in crate::xds_tests) fn base_config(certs: &[&rcgen::Certificate]) -> Client
     config
 }
 
-pub(in crate::xds_tests) fn ca_params(name: &str, serial: u64) -> CertificateParams {
+pub(crate) fn ca_params(name: &str, serial: u64) -> CertificateParams {
     let mut params = CertificateParams::new(Vec::new()).unwrap();
     params
         .distinguished_name
@@ -43,20 +43,18 @@ pub(in crate::xds_tests) fn ca_params(name: &str, serial: u64) -> CertificatePar
     params
 }
 
-pub(in crate::xds_tests) fn ca(name: &str) -> CertifiedIssuer<'static, KeyPair> {
+pub(crate) fn ca(name: &str) -> CertifiedIssuer<'static, KeyPair> {
     CertifiedIssuer::self_signed(ca_params(name, 1), KeyPair::generate().unwrap()).unwrap()
 }
 
-pub(in crate::xds_tests) fn server_cert(
-    issuer: &Issuer<'_, KeyPair>,
-) -> (rcgen::Certificate, KeyPair) {
+pub(crate) fn server_cert(issuer: &Issuer<'_, KeyPair>) -> (rcgen::Certificate, KeyPair) {
     let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
     params.serial_number = Some(3.into());
     let key = KeyPair::generate().unwrap();
     (params.signed_by(&key, issuer).unwrap(), key)
 }
 
-pub(in crate::xds_tests) fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -> Vec<u8> {
+pub(crate) fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -> Vec<u8> {
     rcgen::CertificateRevocationListParams {
         this_update: rcgen::date_time_ymd(2025, 1, 1),
         next_update: rcgen::date_time_ymd(2030, 1, 1),
@@ -80,17 +78,14 @@ pub(in crate::xds_tests) fn crl(issuer: &Issuer<'_, KeyPair>, revoked: &[u64]) -
     .into_bytes()
 }
 
-pub(in crate::xds_tests) fn snapshot(
+pub(crate) fn snapshot(
     issuer: &CertifiedIssuer<'_, KeyPair>,
     crls: Vec<Vec<u8>>,
 ) -> CertificateData {
     CertificateData::new(Some(issuer.pem().into_bytes()), None, Some(crls)).unwrap()
 }
 
-pub(in crate::xds_tests) fn server_config(
-    chain: &[&rcgen::Certificate],
-    key: &KeyPair,
-) -> Arc<ServerConfig> {
+pub(crate) fn server_config(chain: &[&rcgen::Certificate], key: &KeyPair) -> Arc<ServerConfig> {
     Arc::new(
         ServerConfig::builder_with_provider(rustls::crypto::ring::default_provider().into())
             .with_safe_default_protocol_versions()
