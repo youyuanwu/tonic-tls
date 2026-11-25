@@ -9,12 +9,19 @@ This crate provides xDS-style certificate providers for
 [tonic-tls](../README.md), not the xDS discovery protocol. The built-in TLS
 client and server adapters support **rustls** and **OpenSSL**.
 
+The optional `xds` feature provides `xds::ConfiguredMakeConnector` for upstream's
+gRPC builder with explicitly application-configured TLS.
+It does not enable upstream TLS or translate CDS security policy automatically.
+See [custom connectors](#upstream-xds-custom-connectors) and the
+[integration design](../docs/Tonic-xds-connector-design.md).
+
 ## Source layout
 
 - [provider](src/provider/): snapshots, identities, and file watching, shared by
   clients and servers.
 - [client](src/client/): backend-neutral reloadable connector and its cache.
 - [server](src/server/): backend-neutral reloadable acceptor and client-auth settings.
+- [xds](src/xds.rs): optional configured gRPC factory for upstream discovery.
 - [rustls](src/rustls/) and [openssl](src/openssl/): matching `client`, `server`,
   and private `common` modules for backend-specific certificate and CRL handling.
 
@@ -22,8 +29,9 @@ The crate root and backend modules re-export the public APIs; internal file
 organization does not change application imports.
 
 Integration tests live in [xds_tests](../tonic-tls-tests/src/xds_tests/), grouped
-into client scenarios (rotation, CRLs, raw TCP, and backend-specific behavior)
-and server rotation scenarios. Shared providers, certificate fixtures, backend
+into client scenarios (rotation, CRLs, raw TCP, and backend-specific behavior),
+server rotation scenarios, and upstream transport integration. Shared providers,
+certificate fixtures, backend
 adapters, and gRPC helpers live in its `support` directory, not in test suites.
 Run them with `cargo test -p tonic-tls-tests --lib -- xds_tests::`.
 
@@ -40,6 +48,60 @@ tonic-tls-xds = { version = "0.1", features = ["rustls"] }
 
 For OpenSSL, enable `openssl` instead.
 OpenSSL 1.1.1 or newer and its development libraries are required.
+
+## Upstream xDS custom connectors
+
+Enable `features = ["xds", "rustls"]` to combine upstream discovery with our
+existing rustls connectors and providers. The `xds` feature alone is
+backend-neutral and does not depend on rustls. The workspace pins upstream
+`tonic-xds` to `0.1.0-alpha.5` because its custom connector API is pre-release.
+ADS uses plaintext bootstrap credentials (`insecure`); control-plane TLS is
+outside this integration.
+
+The [compiled module example](src/xds.rs) shows the complete setup. Applications
+do not need to implement upstream connector traits:
+
+1. Construct and eagerly validate a `ReloadableTlsConnector` with your provider
+   and rustls factory during application setup.
+2. Register it for a known cluster and pass the factory to upstream's gRPC builder:
+
+```rust
+use tonic_tls_xds::xds::ConfiguredMakeConnector;
+
+let factory = ConfiguredMakeConnector::new("my-cluster", reloadable_connector);
+let channel = builder.build_grpc_channel_with_connector(factory)?;
+let client = GreeterClient::new(channel);
+```
+
+`ConfiguredMakeConnector` accepts an already configured TLS URI service from any
+backend, not just rustls. It rejects unregistered clusters and returns upstream's
+standard `EndpointChannel<Channel>`, preserving gRPC retry, deadline,
+outcome-classification, and circuit-breaking behavior. It creates lazy channels
+using the primary discovered address and upstream's 10-second connection timeout
+and 30-second/10-second HTTP/2 keepalive settings.
+
+The factory uses an internal `http://` connection URI and an `https://` request
+origin to avoid applying tonic TLS a second time. The supplied connector must
+perform TLS and configure SNI/peer verification itself. Clones of a
+reloadable connector share their configuration cache. Provider changes are
+selected on new handshakes, including reconnects of the same channel, without a
+new CDS update. Existing connections are unaffected, and provider or TLS errors
+do not fall back to older cached credentials.
+
+This supported path uses **application-owned TLS policy**, including its
+configured server name. It does not interpret or enforce hidden CDS TLS mode,
+provider references, or SAN matchers. Automatic A29 policy translation and the
+design's `RustlsMakeConnector` remain blocked on upstream backend-neutral
+metadata access. No deferred constructor or new verifier is added in this stage;
+the existing public reloadable constructor still validates eagerly.
+
+Run the plaintext-ADS/static-rustls integration, EDS endpoint-replacement, and
+cluster-selection tests with
+`cargo test -p tonic-tls-tests --lib xds_tests::transport::`.
+The EDS test updates the advertised endpoint from A to B while retaining the
+same client and fixed TLS credentials, then confirms A remains responsive.
+Certificate rotation remains covered by the connector/provider suites, not by
+xDS-channel tests.
 
 ## Watching certificate files
 

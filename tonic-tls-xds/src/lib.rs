@@ -15,10 +15,16 @@
 //! use the same [`ServerConfig`] and provider snapshots.
 //! Providers and generic connector/acceptor APIs require no TLS backend feature.
 //! This crate does not implement the xDS discovery protocol.
+//! Enable `xds` for `xds::ConfiguredMakeConnector`, which connects explicitly
+//! configured TLS URI services to upstream's gRPC builder without enabling
+//! upstream TLS. Automatic CDS TLS-policy translation is not provided.
 
 mod client;
 mod provider;
 mod server;
+
+#[cfg(feature = "xds")]
+pub mod xds;
 
 pub use client::{ConnectorPair, ReloadableTlsConnector, TlsConnectorFactory};
 pub use provider::{

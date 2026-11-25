@@ -59,6 +59,7 @@ impl tonic_tls::Incoming for TestIncoming {
 
 struct PeerGreeter {
     clients: Vec<CertificateDer<'static>>,
+    name: Option<&'static str>,
 }
 
 #[tonic::async_trait]
@@ -80,7 +81,7 @@ impl helloworld::greeter_server::Greeter for PeerGreeter {
             .position(|cert| Some(cert) == certs.first())
             .ok_or_else(|| Status::unauthenticated("unexpected client certificate"))?;
         Ok(Response::new(HelloReply {
-            message: index.to_string(),
+            message: self.name.map_or_else(|| index.to_string(), str::to_owned),
         }))
     }
 }
@@ -90,6 +91,25 @@ pub(in crate::xds_tests) async fn start_server(
     key: &rcgen::KeyPair,
     clients: &[&rcgen::Certificate],
     first_connection: Option<oneshot::Sender<TcpStream>>,
+) -> (Endpoint, CancellationToken, tokio::task::JoinHandle<()>) {
+    start_server_inner(cert, key, clients, first_connection, None).await
+}
+
+pub(in crate::xds_tests) async fn start_named_server(
+    cert: &rcgen::Certificate,
+    key: &rcgen::KeyPair,
+    clients: &[&rcgen::Certificate],
+    name: &'static str,
+) -> (Endpoint, CancellationToken, tokio::task::JoinHandle<()>) {
+    start_server_inner(cert, key, clients, None, Some(name)).await
+}
+
+async fn start_server_inner(
+    cert: &rcgen::Certificate,
+    key: &rcgen::KeyPair,
+    clients: &[&rcgen::Certificate],
+    first_connection: Option<oneshot::Sender<TcpStream>>,
+    name: Option<&'static str>,
 ) -> (Endpoint, CancellationToken, tokio::task::JoinHandle<()>) {
     let crypto = Arc::new(rustls::crypto::ring::default_provider());
     let verifier =
@@ -108,6 +128,7 @@ pub(in crate::xds_tests) async fn start_server(
     config.alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
     let greeter = PeerGreeter {
         clients: clients.iter().map(|cert| cert.der().clone()).collect(),
+        name,
     };
     let (listener, addr) = create_listener_server().await;
     let shutdown = CancellationToken::new();

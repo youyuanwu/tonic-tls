@@ -8,6 +8,7 @@ use std::{
 };
 use tonic_tls_xds::{CertificateData, CertificateProvider};
 
+pub(super) mod ads;
 pub(super) mod backend;
 pub(super) mod certs;
 pub(super) mod grpc;
