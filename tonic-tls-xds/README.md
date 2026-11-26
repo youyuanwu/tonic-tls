@@ -9,8 +9,9 @@ This crate provides xDS-style certificate providers for
 [tonic-tls](../README.md), not the xDS discovery protocol. The built-in TLS
 client and server adapters support **rustls** and **OpenSSL**.
 
-The optional `xds` feature provides `xds::ConfiguredMakeConnector` for upstream's
-gRPC builder with explicitly application-configured TLS.
+The optional `xds` feature provides `xds::ConfiguredMakeConnector` and
+`xds::ConfiguredControlPlaneConnector` for upstream's data-plane and ADS
+connections with explicitly application-configured TLS.
 It does not enable upstream TLS or translate CDS security policy automatically.
 See [custom connectors](#upstream-xds-custom-connectors) and the
 [integration design](../docs/Tonic-xds-connector-design.md).
@@ -21,7 +22,10 @@ See [custom connectors](#upstream-xds-custom-connectors) and the
   clients and servers.
 - [client](src/client/): backend-neutral reloadable connector and its cache.
 - [server](src/server/): backend-neutral reloadable acceptor and client-auth settings.
-- [xds](src/xds.rs): optional configured gRPC factory for upstream discovery.
+- [xds](src/xds/mod.rs): public connector re-exports and the compiled setup example.
+- [data plane](src/xds/data_plane.rs): configured gRPC endpoint factory.
+- [control plane](src/xds/control_plane.rs): independently configured ADS TLS
+  connector, re-exported from `xds`.
 - [rustls](src/rustls/) and [openssl](src/openssl/): matching `client`, `server`,
   and private `common` modules for backend-specific certificate and CRL handling.
 
@@ -37,8 +41,8 @@ Integration tests in the existing test crate are separated by behavior:
   Client channel scenarios and server channel/handshake scenarios have separate
   modules; backend-neutral scenarios are reused for rustls and OpenSSL.
 - [xDS discovery](../tonic-tls-tests/src/xds_tests/): configured TLS connectivity,
-  cluster selection, and EDS replacement with fixed credentials, each run
-  against rustls and OpenSSL client connectors.
+  cluster selection, EDS replacement, and control-plane TLS with fixed
+  credentials, each run against rustls and OpenSSL client connectors.
 
 Shared certificate and authenticated gRPC server fixtures live in
 [test_support](../tonic-tls-tests/src/test_support/). Provider doubles, backend
@@ -73,10 +77,11 @@ Enable `features = ["xds", "rustls"]` or `["xds", "openssl"]` to combine upstrea
 discovery with our existing TLS connectors and providers. The `xds` feature alone is
 backend-neutral and does not depend on rustls. The workspace pins upstream
 `tonic-xds` to `0.1.0-alpha.5` because its custom connector API is pre-release.
-ADS uses plaintext bootstrap credentials (`insecure`); control-plane TLS is
-outside this integration.
+ADS uses upstream's plaintext transport with `insecure` bootstrap credentials
+unless a configured control-plane connector is supplied. For secured ADS, select
+`tls` bootstrap credentials and configure its TLS URI service independently.
 
-The [compiled module example](src/xds.rs) shows the complete setup. Applications
+The [compiled module example](src/xds/mod.rs) shows the complete setup. Applications
 do not need to implement upstream connector traits:
 
 1. Construct and eagerly validate a `ReloadableTlsConnector` with your provider
@@ -113,16 +118,48 @@ design's `RustlsMakeConnector` remain blocked on upstream backend-neutral
 metadata access. No deferred constructor or new verifier is added in this stage;
 the existing public reloadable constructor still validates eagerly.
 
-Run the plaintext-ADS/static-mTLS integration, EDS endpoint-replacement, and
+Run the TLS-ADS/static-mTLS integration, EDS endpoint-replacement, and
 cluster-selection scenarios for both rustls and OpenSSL with
 `cargo test -p tonic-tls-tests --lib xds_tests::transport::`.
 The `rustls_xds::` and `openssl_xds::` submodules instantiate the same scenarios
-through the backend-test pattern used by the rotation suites. Both use the
-existing rustls mTLS server fixture.
+through the backend-test pattern used by the rotation suites. Each backend
+provides both control- and data-plane client connectors; the ADS and application
+server fixtures use rustls.
 The EDS test updates the advertised endpoint from A to B while retaining the
 same client and fixed TLS credentials, then confirms A remains responsive.
 Certificate rotation remains covered by the connector/provider suites, not by
 xDS-channel tests.
+
+### Configured control-plane TLS
+
+`xds::ConfiguredControlPlaneConnector::new` accepts an already configured TLS
+URI service and implements upstream's `ControlPlaneConnector`. Register it with
+`XdsChannelBuilder::with_control_plane_connector`, or with
+`XdsClientPoolBuilder::with_control_plane_connector` when sharing an ADS client.
+The [compiled module example](src/xds/mod.rs) shows independently configured
+control- and data-plane services.
+
+The supplied service must authenticate the management server, provide
+confidentiality and integrity, and never fall back to plaintext. It owns roots,
+client identity, SNI, and ALPN; bootstrap certificate-file settings are not
+translated into TLS configuration. Ordinary and reloadable rustls/OpenSSL URI
+connectors are supported without enabling upstream TLS features.
+
+The adapter accepts HTTPS and scheme-less server addresses, defaulting an
+omitted port to 443. Malformed addresses, explicit HTTP, and other schemes
+including Unix sockets return connection errors. Upstream's plaintext ADS path
+is unchanged. An internal HTTP URI with HTTPS origin prevents a second TLS
+layer when tonic TLS features are unified.
+
+Channels connect eagerly using upstream ADS timeout/keepalive defaults.
+Explicit keepalive overrides are honored, including disabling PINGs. The
+constructor itself does not validate credentials or connect; construct a
+fallible reloadable connector first. Socket settings remain transport-owned,
+and upstream retains ADS retries and call-credential handling.
+
+The existing six `xds_tests::transport::` tests now use TLS on the control plane
+through this adapter, without adding test cases. Control- and data-plane
+certificates are distinct, and all credentials remain fixed.
 
 ## Watching certificate files
 
