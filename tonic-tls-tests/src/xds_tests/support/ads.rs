@@ -1,5 +1,7 @@
-use std::{collections::HashMap, net::SocketAddr, pin::Pin};
+use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::Arc};
 
+use super::backend::TestBackend;
+use crate::{test_support::certs::server_config, tests::make_test_cert};
 use envoy_types::pb::{
     envoy::{
         config::{
@@ -37,8 +39,15 @@ use futures::Stream;
 use prost::{Message, Name};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tonic::{Request, Response, Status};
-use tonic_xds::{BootstrapConfig, ChannelCredentialType, XdsChannelConfig, XdsUri};
+use tonic::{
+    Request, Response, Status,
+    transport::{Endpoint as TonicEndpoint, server::TcpIncoming},
+};
+use tonic_tls::TcpTransport;
+use tonic_tls_xds::xds::ConfiguredControlPlaneConnector;
+use tonic_xds::{
+    BootstrapConfig, ChannelCredentialType, XdsChannelBuilder, XdsChannelConfig, XdsUri,
+};
 
 pub(in crate::xds_tests) const CLUSTER: &str = "explicit-tls";
 const LISTENER: &str = "connector-test";
@@ -243,15 +252,19 @@ impl AggregatedDiscoveryService for Ads {
     }
 }
 
-pub(in crate::xds_tests) async fn start_control_plane(
+pub(in crate::xds_tests) async fn start_control_plane<B: TestBackend>(
     endpoint: SocketAddr,
 ) -> (
-    XdsChannelConfig,
+    XdsChannelBuilder,
     EndpointUpdates,
     CancellationToken,
     tokio::task::JoinHandle<()>,
 ) {
     let (listener, address) = crate::tests::create_listener_server().await;
+    let (cert, key) = make_test_cert(vec!["localhost".into()]);
+    let mut tls = server_config(&[&cert], &key);
+    Arc::make_mut(&mut tls).alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
+    let incoming = tonic_tls::rustls::TlsIncoming::new(TcpIncoming::from(listener), tls);
     let shutdown = CancellationToken::new();
     let signal = shutdown.clone();
     let ads = Ads::new(endpoint);
@@ -259,19 +272,23 @@ pub(in crate::xds_tests) async fn start_control_plane(
     let task = tokio::spawn(async move {
         tonic::transport::Server::builder()
             .add_service(AggregatedDiscoveryServiceServer::new(ads))
-            .serve_with_incoming_shutdown(
-                tokio_stream::wrappers::TcpListenerStream::new(listener),
-                signal.cancelled_owned(),
-            )
+            .serve_with_incoming_shutdown(incoming, signal.cancelled_owned())
             .await
             .unwrap();
     });
-    let bootstrap = BootstrapConfig::builder(format!("http://{address}"))
-        .channel_creds([ChannelCredentialType::Insecure])
+    let bootstrap = BootstrapConfig::builder(format!("https://{address}"))
+        .channel_creds([ChannelCredentialType::Tls])
         .node_id("connector-test")
         .build()
         .unwrap();
     let config = XdsChannelConfig::new(XdsUri::parse(&format!("xds:///{LISTENER}")).unwrap())
         .with_bootstrap(bootstrap);
-    (config, updates, shutdown, task)
+    let template = TonicEndpoint::from_shared(format!("http://{address}")).unwrap();
+    let connector = ConfiguredControlPlaneConnector::new(B::connector(
+        TcpTransport::from_endpoint(&template),
+        &[&cert],
+        None,
+    ));
+    let builder = XdsChannelBuilder::new(config).with_control_plane_connector(connector);
+    (builder, updates, shutdown, task)
 }

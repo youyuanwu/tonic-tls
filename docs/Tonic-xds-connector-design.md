@@ -1,7 +1,8 @@
 # tonic-xds custom connector integration
 
-Status: **Explicitly configured TLS integration and EDS endpoint-update coverage
-implemented. Automatic CDS TLS-policy translation remains deferred.**
+Status: **Explicitly configured data-plane and control-plane TLS integration,
+plus EDS endpoint-update coverage, implemented for rustls and OpenSSL.
+Automatic CDS TLS-policy translation remains deferred.**
 
 Current-state review: 2026-11-25. The supported upstream dependency is pinned in
 the [workspace manifest](../Cargo.toml). Upstream references below target
@@ -9,8 +10,9 @@ the [workspace manifest](../Cargo.toml). Upstream references below target
 
 ## Scope and ownership
 
-`tonic-tls-xds` connects an application-configured TLS URI service to upstream's
-gRPC channel builder. Applications do not implement upstream connector traits.
+`tonic-tls-xds` connects application-configured TLS URI services to upstream's
+gRPC endpoint and ADS builders. Applications do not implement upstream
+connector traits.
 
 | Responsibility | Owner |
 |---|---|
@@ -19,10 +21,11 @@ gRPC channel builder. Applications do not implement upstream connector traits.
 | Raw connections and custom transports | `tonic-tls::Transport`. |
 | TLS backend, trust, server name, client identity, and ALPN | The application's supplied TLS connector. |
 | Optional credential refresh and configuration caching | Existing `tonic-tls-xds` providers and reloadable connector. |
-| Control-plane transport | Upstream ADS over plaintext, using `insecure` bootstrap credentials. |
+| Control-plane transport | Upstream's default plaintext ADS transport, or our opt-in configured TLS adapter. ADS protocol handling remains upstream-owned. |
 
 The integration does not enable upstream TLS, infer TLS policy from CDS, or
-provide an automatic A29 verifier. Control-plane TLS is out of scope.
+provide an automatic A29 verifier. Control-plane TLS policy is also explicitly
+application-owned, not translated from bootstrap certificate-file settings.
 
 ## Source of truth
 
@@ -31,20 +34,22 @@ in their source files rather than duplicating them here.
 
 | Source | Contents |
 |---|---|
-| [Configured connector module](../tonic-tls-xds/src/xds.rs) | Public `ConfiguredMakeConnector`, private endpoint connector, liveness settings, and compiled rustls/reloadable usage example. |
+| [Public connector module](../tonic-tls-xds/src/xds/mod.rs) | Stable connector re-exports and the compiled rustls/reloadable usage example. |
+| [Data-plane connector module](../tonic-tls-xds/src/xds/data_plane.rs) | Public `ConfiguredMakeConnector`, private endpoint connector, and endpoint liveness settings. |
+| [Control-plane connector module](../tonic-tls-xds/src/xds/control_plane.rs) | Public `ConfiguredControlPlaneConnector`, fallible URI handling, and ADS connection settings. |
 | [Companion manifest](../tonic-tls-xds/Cargo.toml) | Optional integration dependencies and the `xds`, `rustls`, and `openssl` features. |
 | [Workspace manifest](../Cargo.toml) | Exact upstream pre-release pin and disabled default features. |
 | [Core client implementation](../tonic-tls/src/client.rs) | `Transport`, `TlsConnector`, and their composition into a URI service. |
 | [Reloadable connector](../tonic-tls-xds/src/client/mod.rs) | Eager initial validation, per-handshake snapshot selection, and connector-pair cache. |
 | [Provider implementation](../tonic-tls-xds/src/provider/mod.rs) | Certificate snapshots, provider contract, and failure semantics. |
 | [Rustls client implementation](../tonic-tls-xds/src/rustls/client.rs) | Existing client factory, PEM application, verifier replacement, and resumption policy. |
-| [Integration tests](../tonic-tls-tests/src/xds_tests/transport.rs) | Static mTLS connectivity, EDS endpoint replacement, and unregistered-cluster rejection. |
-| [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) | Plaintext control plane, static LDS/CDS resources, and mutable EDS snapshots. |
+| [Integration tests](../tonic-tls-tests/src/xds_tests/transport.rs) | Existing rustls/OpenSSL scenarios using TLS ADS, static data-plane mTLS connectivity, EDS endpoint replacement, and unregistered-cluster rejection. |
+| [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) | TLS control plane, static LDS/CDS resources, and mutable EDS snapshots. |
 | [gRPC fixtures](../tonic-tls-tests/src/test_support/grpc.rs) | Authenticated test servers, optional server-identifying replies, and shared server setup used by discovery and reloadable TLS tests. |
 
 The [usage guide](../tonic-tls-xds/README.md#upstream-xds-custom-connectors)
-describes installation and the focused test command. The module's compiled
-example is the authoritative end-to-end application example.
+describes installation and focused test commands. The existing module's compiled
+example configures independent control- and data-plane services.
 
 ## Implemented API
 
@@ -69,16 +74,53 @@ transport-builder integration, or Hyper-frame test harness.
 
 ### Features
 
-The optional `xds` feature enables the factory without selecting a TLS backend.
+The optional `xds` feature enables both adapters without selecting a TLS backend.
 Enable the existing backend feature separately when needed. Rustls applications
 also configure their crypto provider through their TLS configuration.
 
 The integration does not activate `tonic-xds/tls-ring`,
 `tonic-xds/tls-aws-lc`, or `_tls-any`. There are no combined `xds-ring` or
 `xds-aws-lc` features. A non-rustls application must not acquire rustls merely
-to use our factory.
+to use our adapters.
 
-### Connection lifecycle
+### Configured control-plane TLS
+
+`ConfiguredControlPlaneConnector` wraps a separately configured TLS URI service.
+It implements upstream [ControlPlaneConnector][control-plane-connector] and is
+registered through the [channel-builder hook][control-plane-builder] or the
+corresponding shared-client-pool hook. Backend connections are unaffected.
+
+The supplied service must authenticate the management server and provide
+confidentiality and integrity on every connection without plaintext fallback.
+The adapter declares this contract through upstream's `is_secure` method; the
+declaration is trusted, not inferred from the HTTP scheme or TLS features.
+
+Secured ADS bootstrap selects `tls` credentials and uses HTTPS or a scheme-less
+server address. The adapter defaults an omitted port to 443 and returns errors
+for malformed addresses, explicit HTTP, and unsupported schemes. Unix sockets
+are not supported by this TLS adapter. Bootstrap certificate-file settings are
+not translated into TLS policy; configure roots, client identity, server name,
+and ALPN in the supplied service.
+
+The adapter connects eagerly through that service, using HTTP connection
+plumbing with an HTTPS origin so tonic does not add another TLS layer. Its
+constructor does not connect or validate credentials. Applications using a
+reloadable connector still construct and validate it first.
+
+Connection timeout and HTTP/2 keepalive defaults match upstream ADS. Explicit
+keepalive overrides, including disabling PINGs, are honored. Values and
+configuration handling live in the
+[control-plane implementation](../tonic-tls-xds/src/xds/control_plane.rs).
+Socket settings remain transport-owned; ADS retry and call-credential handling
+remain upstream-owned.
+
+Control- and data-plane services may use different backends, credentials, and
+server names. When sharing an `XdsClientPool`, configure its bootstrap and
+control-plane connector on the pool rather than duplicating those settings on
+each channel. Without this adapter, upstream's existing plaintext ADS path with
+`insecure` credentials is unchanged.
+
+### Data-plane connection lifecycle
 
 1. The application configures its transport and TLS backend, including peer
    verification, server name, identity, and ALPN.
@@ -99,7 +141,7 @@ from the HTTP authority or confused with the discovery target.
 
 Connection timeout and HTTP/2 keepalive settings match upstream's fixed gRPC
 defaults. Their exact values are documented and applied in the
-[connector implementation](../tonic-tls-xds/src/xds.rs). TCP socket settings
+[connector implementation](../tonic-tls-xds/src/xds/data_plane.rs). TCP socket settings
 remain the supplied transport's responsibility.
 
 ### Apply TLS exactly once
@@ -119,7 +161,7 @@ and connection or authentication errors propagate through the channel.
 
 ### Credential rotation remains delegated
 
-The factory never reads certificate files or rebuilds TLS configurations.
+Neither adapter reads certificate files or rebuilds TLS configurations.
 Clones preserve the supplied URI service's own sharing semantics.
 
 When that service is the existing reloadable connector, its provider and cache
@@ -157,12 +199,13 @@ All integration cases are defined in the
 `rustls_xds` and `openssl_xds` modules instantiate the same three scenarios using
 [backend adapters](../tonic-tls-tests/src/xds_tests/support/backend.rs), following
 the rotation suites' generic-scenario and registration-macro pattern. These
-adapters use the existing TLS URI services; both client backends authenticate to
-the shared rustls mTLS server fixture.
+adapters use the existing TLS URI services for both control- and data-plane
+connections. The ADS fixture uses TLS and distinct, fixed credentials; the
+application server uses the shared rustls mTLS fixture. No test cases are added.
 
 | Scenario (each backend) | What it establishes |
 |---|---|
-| `uses_configured_tls_connector` | Plaintext ADS discovery reaches a static mTLS service through our configured transport and factory. |
+| `uses_configured_tls_connector` | TLS ADS discovery reaches a static mTLS service through independently configured control- and data-plane connectors. |
 | `switches_endpoints_after_eds_update` | The same client/channel switches from A to B after an EDS replacement, subsequent replies stay on B, and a direct RPC proves A remains healthy. |
 | `rejects_unregistered_clusters_before_connecting` | An unregistered cluster produces the factory's invalid-input error before any data-plane connection attempt. |
 
@@ -242,7 +285,9 @@ second local CDS watcher or global mutable-policy registry as a shortcut.
 
 ## Out of scope
 
-- Control-plane TLS, SDS, or application-server xDS discovery.
+- Automatic control-plane bootstrap certificate/provider policy translation,
+  custom plaintext/Unix-socket control-plane adapters, SDS, or application-server
+  xDS discovery.
 - Automatic backend-neutral CDS policy translation before the upstream APIs
   above exist.
 - Forced connection draining or a bounded cutover time for established sessions.
@@ -256,11 +301,15 @@ second local CDS watcher or global mutable-policy registry as a shortcut.
 - [Companion usage guide](../tonic-tls-xds/README.md).
 - [Upstream connector traits][make-connector] and [endpoint connector][connector].
 - [Upstream gRPC custom-connector builder][grpc-builder].
+- [Upstream control-plane connector][control-plane-connector] and
+  [channel-builder hook][control-plane-builder].
 - [Upstream cluster metadata][cluster-config] and [TLS metadata][cluster-tls].
 - [Upstream CDS connector lifecycle][upstream-cluster-connector] and
   [endpoint discovery][upstream-endpoints].
 
 [make-connector]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/trait.MakeConnector.html
+[control-plane-connector]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/trait.ControlPlaneConnector.html
+[control-plane-builder]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/struct.XdsChannelBuilder.html#method.with_control_plane_connector
 [connector]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/trait.Connector.html
 [grpc-builder]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/struct.XdsChannelBuilder.html#method.build_grpc_channel_with_connector
 [cluster-config]: https://docs.rs/tonic-xds/0.1.0-alpha.5/tonic_xds/struct.ClusterConfig.html

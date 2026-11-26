@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 use tonic::transport::{Endpoint, Uri};
 use tonic_tls::{TcpTransport, Transport};
 use tonic_tls_xds::xds::ConfiguredMakeConnector;
-use tonic_xds::{XdsChannelBuilder, XdsChannelGrpc};
+use tonic_xds::XdsChannelGrpc;
 
 use super::support::{
     ads::{CLUSTER, start_control_plane},
@@ -74,12 +74,8 @@ async fn uses_configured_tls_connector<B: TestBackend>() {
             Some((&client_cert, &client_key)),
         ),
     );
-    let (config, _updates, ads_shutdown, ads_task) = start_control_plane(address).await;
-    let mut client = Client::new(
-        XdsChannelBuilder::new(config)
-            .build_grpc_channel_with_connector(factory)
-            .unwrap(),
-    );
+    let (builder, _updates, ads_shutdown, ads_task) = start_control_plane::<B>(address).await;
+    let mut client = Client::new(builder.build_grpc_channel_with_connector(factory).unwrap());
     assert_eq!(peer(&mut client).await.unwrap(), "0");
     assert_eq!(attempts.load(Ordering::Relaxed), 1);
 
@@ -115,9 +111,9 @@ async fn switches_endpoints_after_eds_update<B: TestBackend>() {
         &[&server],
         Some((&client_cert, &client_key)),
     );
-    let (config, updates, ads_shutdown, ads_task) = start_control_plane(address_a).await;
+    let (builder, updates, ads_shutdown, ads_task) = start_control_plane::<B>(address_a).await;
     let mut client = Client::new(
-        XdsChannelBuilder::new(config)
+        builder
             .build_grpc_channel_with_connector(ConfiguredMakeConnector::new(
                 CLUSTER,
                 connector.clone(),
@@ -219,10 +215,10 @@ async fn rejects_unregistered_clusters_before_connecting<B: TestBackend>() {
         &[],
         None,
     );
-    let (config, _updates, shutdown, task) = start_control_plane(address).await;
+    let (builder, _updates, shutdown, task) = start_control_plane::<B>(address).await;
     let (errors_tx, mut errors_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut client = Client::new(
-        XdsChannelBuilder::new(config)
+        builder
             .build_grpc_channel_with_connector(ObserveRejection {
                 factory: ConfiguredMakeConnector::new("other-cluster", connector),
                 errors: errors_tx,
