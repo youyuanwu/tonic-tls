@@ -46,6 +46,7 @@ in their source files rather than duplicating them here.
 | [Integration tests](../tonic-tls-tests/src/xds_tests/transport.rs) | Existing rustls/OpenSSL scenarios using TLS ADS, static data-plane mTLS connectivity, EDS endpoint replacement, and unregistered-cluster rejection. |
 | [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) | TLS control plane, static LDS/CDS resources, and mutable EDS snapshots. |
 | [gRPC fixtures](../tonic-tls-tests/src/test_support/grpc.rs) | Authenticated test servers, optional server-identifying replies, and shared server setup used by discovery and reloadable TLS tests. |
+| [Server backend adapters](../tonic-tls-tests/src/test_support/backend.rs) | Rustls/OpenSSL TLS and mTLS incoming streams, plus shared peer-certificate extraction. |
 
 The [usage guide](../tonic-tls-xds/README.md#upstream-xds-custom-connectors)
 describes installation and focused test commands. The existing module's compiled
@@ -200,8 +201,12 @@ All integration cases are defined in the
 [backend adapters](../tonic-tls-tests/src/xds_tests/support/backend.rs), following
 the rotation suites' generic-scenario and registration-macro pattern. These
 adapters use the existing TLS URI services for both control- and data-plane
-connections. The ADS fixture uses TLS and distinct, fixed credentials; the
-application server uses the shared rustls mTLS fixture. No test cases are added.
+connections and select matching
+[server backend adapters](../tonic-tls-tests/src/test_support/backend.rs).
+The rustls variant uses rustls for both clients and both servers; the OpenSSL
+variant uses OpenSSL for all four roles. ADS uses TLS and distinct, fixed
+credentials; the application server requires mTLS. Existing non-xDS callers
+retain their rustls-default server fixture. No test cases are added.
 
 | Scenario (each backend) | What it establishes |
 |---|---|

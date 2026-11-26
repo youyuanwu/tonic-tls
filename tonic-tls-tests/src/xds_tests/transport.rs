@@ -19,7 +19,7 @@ use super::support::{
 };
 use crate::{
     helloworld::{HelloRequest, greeter_client::GreeterClient},
-    test_support::grpc::{start_named_server, start_server},
+    test_support::grpc::{start_named_server, start_server_for},
     tests::make_test_cert,
 };
 
@@ -54,7 +54,7 @@ async fn uses_configured_tls_connector<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint, shutdown, server_task) =
-        start_server(&server, &server_key, &[&client_cert], None).await;
+        start_server_for::<B>(&server, &server_key, &[&client_cert], None).await;
     let address: SocketAddr = endpoint
         .uri()
         .authority()
@@ -90,9 +90,9 @@ async fn switches_endpoints_after_eds_update<B: TestBackend>() {
     let (server, server_key) = make_test_cert(vec!["localhost".into()]);
     let (client_cert, client_key) = make_test_cert(vec!["client".into()]);
     let (endpoint_a, shutdown_a, task_a) =
-        start_named_server(&server, &server_key, &[&client_cert], "A").await;
+        start_named_server::<B>(&server, &server_key, &[&client_cert], "A").await;
     let (endpoint_b, shutdown_b, task_b) =
-        start_named_server(&server, &server_key, &[&client_cert], "B").await;
+        start_named_server::<B>(&server, &server_key, &[&client_cert], "B").await;
     let [address_a, address_b] = [&endpoint_a, &endpoint_b].map(|endpoint| {
         endpoint
             .uri()

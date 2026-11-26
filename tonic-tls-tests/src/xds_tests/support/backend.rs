@@ -1,4 +1,4 @@
-use crate::test_support::certs::roots;
+use crate::test_support::{backend::ServerBackend, certs::roots};
 use openssl::{
     pkey::PKey,
     ssl::{SslConnector, SslMethod, SslVerifyMode},
@@ -20,7 +20,9 @@ use tower::util::BoxCloneSyncService;
 pub(in crate::xds_tests) type Connector<S> =
     BoxCloneSyncService<Uri, hyper_util::rt::TokioIo<S>, tonic_tls::Error>;
 
-pub(in crate::xds_tests) trait TestBackend {
+pub(in crate::xds_tests) use crate::test_support::backend::{OpenSsl, Rustls};
+
+pub(in crate::xds_tests) trait TestBackend: ServerBackend {
     type TlsStream: AsyncRead + AsyncWrite + Send + Unpin + 'static;
 
     fn connector(
@@ -29,8 +31,6 @@ pub(in crate::xds_tests) trait TestBackend {
         identity: Option<(&rcgen::Certificate, &rcgen::KeyPair)>,
     ) -> Connector<Self::TlsStream>;
 }
-
-pub(in crate::xds_tests) struct Rustls;
 
 impl TestBackend for Rustls {
     type TlsStream = tokio_rustls::client::TlsStream<TcpStream>;
@@ -62,8 +62,6 @@ impl TestBackend for Rustls {
         ))
     }
 }
-
-pub(in crate::xds_tests) struct OpenSsl;
 
 impl TestBackend for OpenSsl {
     type TlsStream = tokio_openssl::SslStream<TcpStream>;

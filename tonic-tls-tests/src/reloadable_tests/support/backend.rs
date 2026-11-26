@@ -1,5 +1,5 @@
 use crate::helloworld::HelloRequest;
-use crate::test_support::certs::base_config;
+use crate::test_support::{backend::ServerBackend, certs::base_config};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -8,7 +8,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, DuplexStream},
     net::TcpStream,
 };
-use tonic::transport::server::TcpConnectInfo;
 use tonic_tls_xds::{CertificateData, ConnectorPair, Identity, TlsConnectorFactory};
 
 pub(in crate::reloadable_tests) enum VerificationFailure {
@@ -154,12 +153,7 @@ impl TestServerBackend for Rustls {
     fn peer_leaf(
         request: &tonic::Request<HelloRequest>,
     ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
-        request
-            .extensions()
-            .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-            .and_then(|info| info.peer_certs())
-            .and_then(|certs| certs.first().cloned())
-            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))
+        <crate::test_support::backend::Rustls as ServerBackend>::peer_leaf(request)
     }
 
     fn assert_invalid_certificate(error: &tonic_tls::Error) {
@@ -187,19 +181,7 @@ impl TestServerBackend for OpenSsl {
     fn peer_leaf(
         request: &tonic::Request<HelloRequest>,
     ) -> Result<rustls::pki_types::CertificateDer<'static>, tonic::Status> {
-        let certs = request
-            .extensions()
-            .get::<tonic_tls::openssl::SslConnectInfo<TcpConnectInfo>>()
-            .and_then(|info| info.peer_certs())
-            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))?;
-        let leaf = certs
-            .first()
-            .ok_or_else(|| tonic::Status::unauthenticated("missing client certificate"))?;
-        leaf.to_der()
-            .map(rustls::pki_types::CertificateDer::from)
-            .map_err(|error| {
-                tonic::Status::internal(format!("client certificate encoding failed: {error}"))
-            })
+        <crate::test_support::backend::OpenSsl as ServerBackend>::peer_leaf(request)
     }
 
     fn assert_invalid_certificate(error: &tonic_tls::Error) {

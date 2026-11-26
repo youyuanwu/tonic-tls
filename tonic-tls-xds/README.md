@@ -45,7 +45,9 @@ Integration tests in the existing test crate are separated by behavior:
   credentials, each run against rustls and OpenSSL client connectors.
 
 Shared certificate and authenticated gRPC server fixtures live in
-[test_support](../tonic-tls-tests/src/test_support/). Provider doubles, backend
+[test_support](../tonic-tls-tests/src/test_support/), including shared
+[server backend adapters](../tonic-tls-tests/src/test_support/backend.rs) for TLS,
+mTLS, and peer-certificate extraction. Provider doubles, backend
 adapters, and reconnect assertions stay in
 [reloadable support](../tonic-tls-tests/src/reloadable_tests/support/);
 the [ADS fixture](../tonic-tls-tests/src/xds_tests/support/ads.rs) and
@@ -122,9 +124,10 @@ Run the TLS-ADS/static-mTLS integration, EDS endpoint-replacement, and
 cluster-selection scenarios for both rustls and OpenSSL with
 `cargo test -p tonic-tls-tests --lib xds_tests::transport::`.
 The `rustls_xds::` and `openssl_xds::` submodules instantiate the same scenarios
-through the backend-test pattern used by the rotation suites. Each backend
-provides both control- and data-plane client connectors; the ADS and application
-server fixtures use rustls.
+through the backend-test pattern used by the rotation suites. Each variant uses
+its backend for both clients and servers on the control and data planes: the
+rustls variant is entirely rustls, and the OpenSSL variant is entirely OpenSSL.
+Other suites retain their existing rustls-default server fixtures.
 The EDS test updates the advertised endpoint from A to B while retaining the
 same client and fixed TLS credentials, then confirms A remains responsive.
 Certificate rotation remains covered by the connector/provider suites, not by
