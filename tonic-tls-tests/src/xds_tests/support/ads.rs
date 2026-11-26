@@ -1,7 +1,7 @@
-use std::{collections::HashMap, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, pin::Pin};
 
 use super::backend::TestBackend;
-use crate::{test_support::certs::server_config, tests::make_test_cert};
+use crate::tests::make_test_cert;
 use envoy_types::pb::{
     envoy::{
         config::{
@@ -262,9 +262,7 @@ pub(in crate::xds_tests) async fn start_control_plane<B: TestBackend>(
 ) {
     let (listener, address) = crate::tests::create_listener_server().await;
     let (cert, key) = make_test_cert(vec!["localhost".into()]);
-    let mut tls = server_config(&[&cert], &key);
-    Arc::make_mut(&mut tls).alpn_protocols = vec![tonic_tls::ALPN_H2.to_vec()];
-    let incoming = tonic_tls::rustls::TlsIncoming::new(TcpIncoming::from(listener), tls);
+    let incoming = B::incoming(TcpIncoming::from(listener), &cert, &key, None);
     let shutdown = CancellationToken::new();
     let signal = shutdown.clone();
     let ads = Ads::new(endpoint);
